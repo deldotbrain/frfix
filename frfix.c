@@ -84,8 +84,17 @@ int snd_async_add_pcm_handler(snd_async_handler_t **handler,
 #ifdef CHANGERES
 #include <GL/gl.h>
 #include <GL/glut.h>
+#include <GL/freeglut.h>
+
 long act_w, act_h, act_xoff, act_yoff;
+char fs = 0;
+
+/* init_manglers calculates and sets an aspect-correct viewport, and stores its
+ * variables for the mouse manglers.
+ */
 void init_manglers(int w, int h) {
+	static void (*glvp)(GLint x, GLint y, GLsizei width, GLsizei height);
+	if (!glvp) glvp = dlsym(RTLD_NEXT, "glViewport");
 	if (w == h * 16/9) {
 		act_w = w;
 		act_h = h;
@@ -102,48 +111,51 @@ void init_manglers(int w, int h) {
 		act_yoff = 0;
 		act_xoff = (w - act_w) / 2;
 	}
-	glViewport(0, 0, 0, 0); /* these will be overridden anyway */
+	glvp(act_xoff, act_yoff, act_w, act_h);
 }
-#ifdef FULLSCREEN
-/* Ignore CreateWindow calls, since EnterGameMode will create a window for us. */
-int glutCreateWindow(const char *title) {
-	int retval;
-	/*char *gmstr;
-	gmstr = malloc(64);
-	snprintf(gmstr, 64, "width=%i height=%i", newres[0], newres[1]);
-	glutGameModeString(gmstr);
-	free(gmstr);*/
-	glutReshapeFunc(0);
-	glutGameModeString("");
-	if ((retval = glutEnterGameMode()) > 0)
-		init_manglers(
-			glutGameModeGet(GLUT_GAME_MODE_WIDTH),
-			glutGameModeGet(GLUT_GAME_MODE_HEIGHT));
-	return retval;
-}
-#else
-/*
-void glutInitWindowSize(int width, int height) {
-	static void (*real_func)(int width, int height);
-	if (!real_func) real_func = dlsym(RTLD_NEXT, "glutInitWindowSize");
-	real_func(newres[0], newres[1]);
-	init_manglers(newres[0], newres[1]);
-}
-*/
+/* Override attempts to install a reshape handler and install our own instead. */
 void glutReshapeFunc(void (*func)(int width, int height)) {
 	static void (*real_func)(void (*func)(int width, int height));
 	if (!real_func) real_func = dlsym(RTLD_NEXT, "glutReshapeFunc");
 	real_func(init_manglers);
 }
-void glutReshapeWindow(int width, int height) { /* nop nop nop nop */ return; }
-#endif
-/* Ignore given values and use our calculated values instead.  This supports
- * arbitrary resolutions.
+/* We don't want these affecting our display.  NOP them out. */
+void glViewport(GLint x, GLint y, GLsizei width, GLsizei height) { return; }
+void glutReshapeWindow(int width, int height) { return; }
+
+/* Add 'q'->quit and 'f'->toggle fullscreen keys, otherwise call Fieldrunners'
+ * keyboard callback.
  */
-void glViewport(GLint x, GLint y, GLsizei width, GLsizei height) {
-	static void (*real_func)(GLint x, GLint y, GLsizei width, GLsizei height);
-	if (!real_func) real_func = dlsym(RTLD_NEXT, "glViewport");
-	real_func(act_xoff, act_yoff, act_w, act_h);
+void (*fr_kbfunc)(unsigned char key, int x, int y);
+void faked_kbfunc(unsigned char key, int x, int y) {
+	static void (*glrw)(int width, int height);
+	if (!glrw) glrw = dlsym(RTLD_NEXT, "glutReshapeWindow");
+	switch (key) {
+	case 'q':
+		glutLeaveMainLoop();
+		break;
+	case 'f':
+		if (fs) {
+			glrw(1280,720);
+			fs = 0;
+		} else {
+			glutFullScreen();
+			fs = 1;
+		}
+		break;
+	default:
+		fr_kbfunc(key, x, y);
+	}
+}
+
+/* Intercept calls for keyboard callbacks, and inject our function to check for
+ * extra keybindings.
+ */
+void glutKeyboardFunc(void (*func)(unsigned char key, int x, int y)) {
+	static void (*real_func)(void (*func)(unsigned char key, int x, int y));
+	if (!real_func) real_func = dlsym(RTLD_NEXT, "glutKeyboardFunc");
+	fr_kbfunc = func;
+	real_func(faked_kbfunc);
 }
 
 /* Mangle the mouse so the cursor lines up with the desktop */
@@ -152,22 +164,18 @@ void faked_mousefunc(int button, int state, int x, int y) {
 	fr_mousefunc(button, state, x-act_xoff, y-act_yoff);
 }
 void (*fr_motionfunc)(int x, int y);
-void faked_motionfunc(int x, int y) {
-	fr_motionfunc(x-act_xoff, y-act_yoff);
-}
+void faked_motionfunc(int x, int y) { fr_motionfunc(x-act_xoff, y-act_yoff); }
 
 /* Intercept calls for mouse callbacks, and inject our manglers */
 void glutMouseFunc(void (*func)(int button, int state, int x, int y)) {
 	static void (*real_func)(void (*func)(int button, int state, int x, int y));
 	if (!real_func) real_func = dlsym(RTLD_NEXT, "glutMouseFunc");
-	printf("Injecting mouse wrangler\n");
 	fr_mousefunc = func;
 	real_func(faked_mousefunc);
 }
 void glutPassiveMotionFunc(void (*func)(int x, int y)) {
 	static void (*real_func)(void (*func)(int x, int y));
 	if (!real_func) real_func = dlsym(RTLD_NEXT, "glutPassiveMotionFunc");
-	printf("Injecting motion wrangler\n");
 	fr_motionfunc = func;
 	real_func(faked_motionfunc);
 }
