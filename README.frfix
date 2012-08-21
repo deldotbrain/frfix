@@ -1,0 +1,15 @@
+frfix: Fieldrunners Sound Fixes
+
+frfix overrides a couple functions called by Fieldrunners so that it opens the
+correct system audio device and buffers its audio (more) correctly.  Also
+included is a launch script that will temporarily disable PulseAudio on 64-bit
+machines, where it would otherwise cause Fieldrunners to crash.
+
+Installation:
+ - Untar into your Fieldrunners directory (perhaps /opt/fieldrunners)
+ - Run build.sh
+Note that you will probably have to do this as root if Fieldrunners is
+installed system-wide.
+
+Running:
+ - use launch.sh to run Fieldrunners
