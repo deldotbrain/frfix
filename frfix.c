@@ -16,6 +16,7 @@
 #define _GNU_SOURCE
 #include <asoundlib.h>
 #include <dlfcn.h>
+#include <stdio.h>
 
 /* Fieldrunners opens 'plughw:0,0' by default.  Instead, let's open 'default'
  * like users expect.  'default' will automatically map to PulseAudio, the
@@ -35,128 +36,6 @@ int snd_pcm_open(snd_pcm_t **pcm,
 	if (!real_func) real_func = dlsym(RTLD_NEXT, "snd_pcm_open");
 	return real_func(pcm, "default", stream, mode);
 }
-
-#ifdef FULLSCREEN
-#include <GL/glut.h>
-#if 0
-int glutCreateWindow(const char *title) {
-	int retval;
-	static int (*real_func)(const char *title);
-	if (!real_func) real_func = dlsym(RTLD_NEXT, "glutCreateWindow");
-	if ((retval = real_func(title)) > 0) {
-		printf("Going fullscreen!\n");
-		glutFullScreen();
-	}
-	return retval;
-}
-void glutReshapeWindow(int width, int height) { /* nop nop nop nop */ return; }
-#endif
-#include <GL/gl.h>
-int glutCreateWindow(const char *title) {
-	int retval;
-	/*glutGameModeString("1280x720");*/
-	/*glutGameModeString("width~1280 height~720");*/
-	glutGameModeString("1920x1080");
-	retval = glutEnterGameMode();
-	printf("createwindow will return %i\n", retval);
-	return retval;
-}
-#if 0
-void glOrtho(GLdouble left, GLdouble right,
-		GLdouble bottom, GLdouble top,
-		GLdouble zNear, GLdouble zFar) {
-	static void (*real_func)(GLdouble left, GLdouble right,
-		GLdouble bottom, GLdouble top,
-		GLdouble zNear, GLdouble zFar);
-	if (!real_func) real_func = dlsym(RTLD_NEXT, "glOrtho");
-	printf("glOrtho: l/r/b/t/N/F: %f/%f/%f/%f/%f/%f\n", left, right, bottom, top, zNear, zFar);
-	/*real_func(left, right, bottom, top, zNear, zFar);*/
-	real_func(-960.0, 960.0, 540.0, -540.0, 0.0, 1500.0);
-	return;
-}
-#endif
-#if 0
-void glMatrixMode(GLenum mode) {
-	static void (*real_func)(GLenum mode);
-	if (!real_func) real_func = dlsym(RTLD_NEXT, "glMatrixMode");
-	printf("glMatrixMode called.\n"
-		"GL_MODELVIEW: %i\n"
-		"GL_PROJECTION: %i\n"
-		"GL_TEXTURE: %i\n"
-		"GL_COLOR: %i\n"
-		"this mode: %i\n",
-		GL_MODELVIEW, GL_PROJECTION, GL_TEXTURE, GL_COLOR, mode);
-	real_func(mode);
-}
-#endif
-#if 0
-char top_matrix = 0;
-void glTranslatef(GLfloat x, GLfloat y, GLfloat z) {
-	static void (*real_func)(GLfloat x, GLfloat y, GLfloat z);
-	if (!real_func) real_func = dlsym(RTLD_NEXT, "glTranslatef");
-	printf("glTranslatef: x/y/z: %f/%f/%f\n", x, y, z);
-	/*real_func(x, y, z);*/
-	/*real_func(x*1.5, y*1.5, z*1.5);*/
-	/*real_func(x*1.225, y*1.225, z*1.225);*/
-	if (top_matrix) {
-		real_func(x, y, z);
-		glScalef(1.5, 1.5, 1.5);
-	} else	real_func(x*1.5, y*1.5, z*1.5);
-	/*glScalef(1.225, 1.225, 1.225);*/
-}
-#endif
-#if 1
-void glViewport(GLint x, GLint y, GLsizei width, GLsizei height) {
-	/*printf("glViewport: x/y/w/h: %i/%i/%i/%i\n", x, y, width, height);*/
-	static void (*real_func)(GLint x, GLint y, GLsizei width, GLsizei height);
-	if (!real_func) real_func = dlsym(RTLD_NEXT, "glViewport");
-	/*real_func(x, y, width, height);*/
-	real_func(0, 0, 1920, 1080);
-}
-#endif
-#if 1
-/* this seems to break things...maybe. */
-void (*fr_mousefunc)(int button, int state, int x, int y);
-void faked_mousefunc(int button, int state, int x, int y) {
-	fr_mousefunc(button, state, x*2/3, y*2/3);
-}
-void (*fr_motionfunc)(int x, int y);
-void faked_motionfunc(int x, int y) {
-	fr_motionfunc(x*2/3, y*2/3);
-}
-
-void glutMouseFunc(void (*func)(int button, int state, int x, int y)) {
-	static void (*real_func)(void (*func)(int button, int state, int x, int y));
-	if (!real_func) real_func = dlsym(RTLD_NEXT, "glutMouseFunc");
-	printf("Injecting mouse wrangler\n");
-	fr_mousefunc = func;
-	real_func(faked_mousefunc);
-}
-void glutPassiveMotionFunc(void (*func)(int x, int y)) {
-	static void (*real_func)(void (*func)(int x, int y));
-	if (!real_func) real_func = dlsym(RTLD_NEXT, "glutPassiveMotionFunc");
-	printf("Injecting motion wrangler\n");
-	fr_motionfunc = func;
-	real_func(faked_motionfunc);
-}
-#endif
-#if 0
-void glPushMatrix() { 
-	static void (*real_func)();
-	if (!real_func) real_func = dlsym(RTLD_NEXT, "glPushMatrix");
-	printf("pushmatrix!\n");
-	real_func();
-	top_matrix = 0;
-}
-void glPopMatrix() { 
-	static void (*real_func)();
-	if (!real_func) real_func = dlsym(RTLD_NEXT, "glPopMatrix");
-	printf("popmatrix!\n");
-	real_func();
-	top_matrix = 1;
-}
-#endif
-#endif
 
 #ifdef FIXDELAY
 /* This will be the actual callback function that Fieldrunners registers.
@@ -199,5 +78,97 @@ int snd_async_add_pcm_handler(snd_async_handler_t **handler,
 
 	fr_callback = callback;
 	return real_func(handler, pcm, fake_callback, private_data);
+}
+#endif
+
+#ifdef CHANGERES
+#include <GL/gl.h>
+#include <GL/glut.h>
+long act_w, act_h, act_xoff, act_yoff;
+void init_manglers(int w, int h) {
+	if (w == h * 16/9) {
+		act_w = w;
+		act_h = h;
+		act_yoff = 0;
+		act_xoff = 0;
+	} else if (w < h * 16/9) {
+		act_w = w;
+		act_h = w * 9/16;
+		act_yoff = (h - act_h) / 2;
+		act_xoff = 0;
+	} else {
+		act_w = h * 16/9;
+		act_h = h;
+		act_yoff = 0;
+		act_xoff = (w - act_w) / 2;
+	}
+	glViewport(0, 0, 0, 0); /* these will be overridden anyway */
+}
+#ifdef FULLSCREEN
+/* Ignore CreateWindow calls, since EnterGameMode will create a window for us. */
+int glutCreateWindow(const char *title) {
+	int retval;
+	/*char *gmstr;
+	gmstr = malloc(64);
+	snprintf(gmstr, 64, "width=%i height=%i", newres[0], newres[1]);
+	glutGameModeString(gmstr);
+	free(gmstr);*/
+	glutReshapeFunc(0);
+	glutGameModeString("");
+	if ((retval = glutEnterGameMode()) > 0)
+		init_manglers(
+			glutGameModeGet(GLUT_GAME_MODE_WIDTH),
+			glutGameModeGet(GLUT_GAME_MODE_HEIGHT));
+	return retval;
+}
+#else
+/*
+void glutInitWindowSize(int width, int height) {
+	static void (*real_func)(int width, int height);
+	if (!real_func) real_func = dlsym(RTLD_NEXT, "glutInitWindowSize");
+	real_func(newres[0], newres[1]);
+	init_manglers(newres[0], newres[1]);
+}
+*/
+void glutReshapeFunc(void (*func)(int width, int height)) {
+	static void (*real_func)(void (*func)(int width, int height));
+	if (!real_func) real_func = dlsym(RTLD_NEXT, "glutReshapeFunc");
+	real_func(init_manglers);
+}
+void glutReshapeWindow(int width, int height) { /* nop nop nop nop */ return; }
+#endif
+/* Ignore given values and use our calculated values instead.  This supports
+ * arbitrary resolutions.
+ */
+void glViewport(GLint x, GLint y, GLsizei width, GLsizei height) {
+	static void (*real_func)(GLint x, GLint y, GLsizei width, GLsizei height);
+	if (!real_func) real_func = dlsym(RTLD_NEXT, "glViewport");
+	real_func(act_xoff, act_yoff, act_w, act_h);
+}
+
+/* Mangle the mouse so the cursor lines up with the desktop */
+void (*fr_mousefunc)(int button, int state, int x, int y);
+void faked_mousefunc(int button, int state, int x, int y) {
+	fr_mousefunc(button, state, x-act_xoff, y-act_yoff);
+}
+void (*fr_motionfunc)(int x, int y);
+void faked_motionfunc(int x, int y) {
+	fr_motionfunc(x-act_xoff, y-act_yoff);
+}
+
+/* Intercept calls for mouse callbacks, and inject our manglers */
+void glutMouseFunc(void (*func)(int button, int state, int x, int y)) {
+	static void (*real_func)(void (*func)(int button, int state, int x, int y));
+	if (!real_func) real_func = dlsym(RTLD_NEXT, "glutMouseFunc");
+	printf("Injecting mouse wrangler\n");
+	fr_mousefunc = func;
+	real_func(faked_mousefunc);
+}
+void glutPassiveMotionFunc(void (*func)(int x, int y)) {
+	static void (*real_func)(void (*func)(int x, int y));
+	if (!real_func) real_func = dlsym(RTLD_NEXT, "glutPassiveMotionFunc");
+	printf("Injecting motion wrangler\n");
+	fr_motionfunc = func;
+	real_func(faked_motionfunc);
 }
 #endif
