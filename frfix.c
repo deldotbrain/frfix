@@ -36,6 +36,128 @@ int snd_pcm_open(snd_pcm_t **pcm,
 	return real_func(pcm, "default", stream, mode);
 }
 
+#ifdef FULLSCREEN
+#include <GL/glut.h>
+#if 0
+int glutCreateWindow(const char *title) {
+	int retval;
+	static int (*real_func)(const char *title);
+	if (!real_func) real_func = dlsym(RTLD_NEXT, "glutCreateWindow");
+	if ((retval = real_func(title)) > 0) {
+		printf("Going fullscreen!\n");
+		glutFullScreen();
+	}
+	return retval;
+}
+void glutReshapeWindow(int width, int height) { /* nop nop nop nop */ return; }
+#endif
+#include <GL/gl.h>
+int glutCreateWindow(const char *title) {
+	int retval;
+	/*glutGameModeString("1280x720");*/
+	/*glutGameModeString("width~1280 height~720");*/
+	glutGameModeString("1920x1080");
+	retval = glutEnterGameMode();
+	printf("createwindow will return %i\n", retval);
+	return retval;
+}
+#if 0
+void glOrtho(GLdouble left, GLdouble right,
+		GLdouble bottom, GLdouble top,
+		GLdouble zNear, GLdouble zFar) {
+	static void (*real_func)(GLdouble left, GLdouble right,
+		GLdouble bottom, GLdouble top,
+		GLdouble zNear, GLdouble zFar);
+	if (!real_func) real_func = dlsym(RTLD_NEXT, "glOrtho");
+	printf("glOrtho: l/r/b/t/N/F: %f/%f/%f/%f/%f/%f\n", left, right, bottom, top, zNear, zFar);
+	/*real_func(left, right, bottom, top, zNear, zFar);*/
+	real_func(-960.0, 960.0, 540.0, -540.0, 0.0, 1500.0);
+	return;
+}
+#endif
+#if 0
+void glMatrixMode(GLenum mode) {
+	static void (*real_func)(GLenum mode);
+	if (!real_func) real_func = dlsym(RTLD_NEXT, "glMatrixMode");
+	printf("glMatrixMode called.\n"
+		"GL_MODELVIEW: %i\n"
+		"GL_PROJECTION: %i\n"
+		"GL_TEXTURE: %i\n"
+		"GL_COLOR: %i\n"
+		"this mode: %i\n",
+		GL_MODELVIEW, GL_PROJECTION, GL_TEXTURE, GL_COLOR, mode);
+	real_func(mode);
+}
+#endif
+#if 0
+char top_matrix = 0;
+void glTranslatef(GLfloat x, GLfloat y, GLfloat z) {
+	static void (*real_func)(GLfloat x, GLfloat y, GLfloat z);
+	if (!real_func) real_func = dlsym(RTLD_NEXT, "glTranslatef");
+	printf("glTranslatef: x/y/z: %f/%f/%f\n", x, y, z);
+	/*real_func(x, y, z);*/
+	/*real_func(x*1.5, y*1.5, z*1.5);*/
+	/*real_func(x*1.225, y*1.225, z*1.225);*/
+	if (top_matrix) {
+		real_func(x, y, z);
+		glScalef(1.5, 1.5, 1.5);
+	} else	real_func(x*1.5, y*1.5, z*1.5);
+	/*glScalef(1.225, 1.225, 1.225);*/
+}
+#endif
+#if 1
+void glViewport(GLint x, GLint y, GLsizei width, GLsizei height) {
+	/*printf("glViewport: x/y/w/h: %i/%i/%i/%i\n", x, y, width, height);*/
+	static void (*real_func)(GLint x, GLint y, GLsizei width, GLsizei height);
+	if (!real_func) real_func = dlsym(RTLD_NEXT, "glViewport");
+	/*real_func(x, y, width, height);*/
+	real_func(0, 0, 1920, 1080);
+}
+#endif
+#if 1
+/* this seems to break things...maybe. */
+void (*fr_mousefunc)(int button, int state, int x, int y);
+void faked_mousefunc(int button, int state, int x, int y) {
+	fr_mousefunc(button, state, x*2/3, y*2/3);
+}
+void (*fr_motionfunc)(int x, int y);
+void faked_motionfunc(int x, int y) {
+	fr_motionfunc(x*2/3, y*2/3);
+}
+
+void glutMouseFunc(void (*func)(int button, int state, int x, int y)) {
+	static void (*real_func)(void (*func)(int button, int state, int x, int y));
+	if (!real_func) real_func = dlsym(RTLD_NEXT, "glutMouseFunc");
+	printf("Injecting mouse wrangler\n");
+	fr_mousefunc = func;
+	real_func(faked_mousefunc);
+}
+void glutPassiveMotionFunc(void (*func)(int x, int y)) {
+	static void (*real_func)(void (*func)(int x, int y));
+	if (!real_func) real_func = dlsym(RTLD_NEXT, "glutPassiveMotionFunc");
+	printf("Injecting motion wrangler\n");
+	fr_motionfunc = func;
+	real_func(faked_motionfunc);
+}
+#endif
+#if 0
+void glPushMatrix() { 
+	static void (*real_func)();
+	if (!real_func) real_func = dlsym(RTLD_NEXT, "glPushMatrix");
+	printf("pushmatrix!\n");
+	real_func();
+	top_matrix = 0;
+}
+void glPopMatrix() { 
+	static void (*real_func)();
+	if (!real_func) real_func = dlsym(RTLD_NEXT, "glPopMatrix");
+	printf("popmatrix!\n");
+	real_func();
+	top_matrix = 1;
+}
+#endif
+#endif
+
 #ifdef FIXDELAY
 /* This will be the actual callback function that Fieldrunners registers.
  * It'll never be called by ALSA, only by our intermediate callback.
