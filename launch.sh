@@ -22,7 +22,14 @@ then	# avoid trying to load pulse on 64-bit machines.
 		fi
 	fi
 fi
-LD_PRELOAD=$thisdir/frfix.so $thisdir/Fieldrunners
+if [[ -f "$thisdir/Fieldrunners" ]]
+then	LD_PRELOAD=$thisdir/frfix.so $thisdir/Fieldrunners
+elif [[ -f "$thisdir/fieldrunners" ]]
+then	LD_PRELOAD=$thisdir/frfix.so $thisdir/fieldrunners
+else	echo "Unable to find Fieldrunners executable!"
+	exit 4
+fi
+	
 if [[ "$do_pulse" == "true" ]]
 then	echo "Restarting PulseAudio."
 	unset ALSA_CONFIG_PATH
