@@ -10,16 +10,17 @@
  *
  * Changing -DFIXDELAY=n when building adjusts sound latency; reducing it may
  * cause audio glitches but is otherwise harmless.  48 works well for me, but
- * 1024 is a safe default.
+ * 1024 is a safe default: it's guaranteed not to be smaller than the default
+ * period size on any reasonable driver, (mostly) regardless of sampling rate.
  */
 #define _GNU_SOURCE
 #include <asoundlib.h>
 #include <dlfcn.h>
 
-/* Fieldrunners opens 'plughw:0,0' by default, with crazy settings that just
- * don't work well.  Let's open 'default' like users expect.
- * It looks like the developers read one of the major ALSA tutorials while
- * porting this.  The tutorial in question is off-base on a lot of things.
+/* Fieldrunners opens 'plughw:0,0' by default.  Instead, let's open 'default'
+ * like users expect.  'default' will automatically map to PulseAudio, the
+ * system dmix, or whatever the user has configured as their default; 'default'
+ * will almost always play nice with other applications.
  */
 int snd_pcm_open(snd_pcm_t **pcm,
 		const char *name,
@@ -49,8 +50,8 @@ void fake_callback(snd_async_handler_t *ahandler) {
 	snd_pcm_t *pcm = snd_async_handler_get_pcm(ahandler);
 	/* Even though we don't need it, we still read available samples.  If
 	 * we don't, apparently ALSA doesn't synchronize its buffers with the
-	 * hardware, so snd_pcm_delay() returns garbage (4096 always) and audio
-	 * gets glitchy.
+	 * hardware, so snd_pcm_delay() returns garbage (4096 always) and our
+	 * delay checks are meaningless.
 	 */
 	snd_pcm_avail_delay(pcm, &avail, &delay);
 #ifdef LOGDELAY

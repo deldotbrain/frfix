@@ -7,7 +7,7 @@ machines, where it would otherwise cause Fieldrunners to crash.
 
 Installation:
  - Untar into your Fieldrunners directory (perhaps /opt/fieldrunners)
- - Run build.sh
+ - Run build.sh (or 'mv frfix.so.prebuilt frfix.so' if build.sh fails)
 Note that you will probably have to do this as root if Fieldrunners is
 installed system-wide.
 
