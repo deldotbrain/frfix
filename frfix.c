@@ -80,7 +80,6 @@ int snd_async_add_pcm_handler(snd_async_handler_t **handler,
 #include <GL/freeglut.h>
 
 long act_w, act_h, act_xoff, act_yoff;
-//float ptr_xscale, ptr_yscale;
 float ptr_scale;
 char fs = 0;
 
@@ -106,10 +105,7 @@ void init_manglers(int w, int h) {
 		act_xoff = (w - act_w) / 2;
 		act_yoff = 0;
 	}
-	/*ptr_xscale = 1280.0 / act_w;
-	ptr_yscale = 720.0 / act_h;*/
-	/*if (fs)*/ ptr_scale = ((1280.0/act_w)>(720.0/act_h)?(1280.0/act_w):(720.0/act_h));
-	//else ptr_scale = ((1280.0/act_w)<(720.0/act_h)?(1280.0/act_w):(720.0/act_h));
+	ptr_scale = ((1280.0/act_w)>(720.0/act_h)?(1280.0/act_w):(720.0/act_h));
 	glvp(act_xoff, act_yoff, act_w, act_h);
 }
 /* Override attempts to install a reshape handler and install our own instead. */
@@ -118,7 +114,7 @@ void glutReshapeFunc(void (*func)(int width, int height)) {
 	if (!real_func) real_func = dlsym(RTLD_NEXT, "glutReshapeFunc");
 	real_func(init_manglers);
 }
-/* We don't want these affecting our display.  NOP them out. */
+/* We don't want these affecting our display.  Just ignore them instead. */
 void glViewport(GLint x, GLint y, GLsizei width, GLsizei height) { return; }
 void glutReshapeWindow(int width, int height) { return; }
 
@@ -157,27 +153,40 @@ void glutKeyboardFunc(void (*func)(unsigned char key, int x, int y)) {
 	real_func(faked_kbfunc);
 }
 
+/* Mangle & bounds-check the pointer.  It should line up with the desktop when
+ * windowed, and never disappear into the letterbox when fullscreen.
+ */
+void mmangle(int *x, int *y) {
+	*x = *x - (fs?0:act_xoff);
+	*y = *y - (fs?0:act_yoff);
+	*x = *x * ptr_scale;
+	*y = *y * ptr_scale;
+	if (fs) {
+		if (*x > 1280) {
+			glutWarpPointer(act_w, *y / ptr_scale);
+			*x = 1280;
+		}
+		if (*y > 720) {
+			glutWarpPointer(*x / ptr_scale, act_h);
+			*y = 720;
+		}
+	}
+}
 /* Mangle the mouse so the cursor lines up with the desktop */
 void (*fr_mousefunc)(int button, int state, int x, int y);
 void faked_mousefunc(int button, int state, int x, int y) {
-	if (fs) fr_mousefunc(button, state, x*ptr_scale, y*ptr_scale);
-	else fr_mousefunc(button, state, x-act_xoff, y-act_yoff);
+	mmangle(&x, &y);
+	fr_mousefunc(button, state, x, y);
+}
+void (*fr_pmotionfunc)(int x, int y);
+void faked_pmotionfunc(int x, int y) {
+	mmangle(&x, &y);
+	fr_pmotionfunc(x, y);
 }
 void (*fr_motionfunc)(int x, int y);
 void faked_motionfunc(int x, int y) {
-	int tx, ty;
-	tx = x - (fs?0:act_xoff);
-	ty = y - (fs?0:act_yoff);
-	tx = tx * ptr_scale;
-	ty = ty * ptr_scale;
-	/* If we're fullscreen, make an effort to constrain pointer to window.
-	 * Otherwise, the cursor can disappear into the letterbox (annoying!)
-	 */
-	if (fs) {
-		if (tx > 1280) glutWarpPointer(act_w, y);
-		if (ty > 720) glutWarpPointer(x, act_h);
-	}
-	fr_motionfunc(tx, ty);
+	mmangle(&x, &y);
+	fr_motionfunc(x, y);
 }
 
 /* Intercept calls for mouse callbacks, and inject our manglers */
@@ -190,6 +199,12 @@ void glutMouseFunc(void (*func)(int button, int state, int x, int y)) {
 void glutPassiveMotionFunc(void (*func)(int x, int y)) {
 	static void (*real_func)(void (*func)(int x, int y));
 	if (!real_func) real_func = dlsym(RTLD_NEXT, "glutPassiveMotionFunc");
+	fr_pmotionfunc = func;
+	real_func(faked_pmotionfunc);
+}
+void glutMotionFunc(void (*func)(int x, int y)) {
+	static void (*real_func)(void (*func)(int x, int y));
+	if (!real_func) real_func = dlsym(RTLD_NEXT, "glutMotionFunc");
 	fr_motionfunc = func;
 	real_func(faked_motionfunc);
 }
