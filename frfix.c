@@ -108,6 +108,9 @@ void init_manglers(int w, int h) {
 	ptr_scale = ((1280.0/act_w)>(720.0/act_h)?(1280.0/act_w):(720.0/act_h));
 	/* glViewport() is NOP'd, use the real thing */
 	glvp(act_xoff, act_yoff, act_w, act_h);
+	/* Check if we're fullscreened and need letterbox workarounds */
+	fs = ((glutGet(GLUT_SCREEN_WIDTH) == glutGet(GLUT_WINDOW_WIDTH)) &&
+		(glutGet(GLUT_SCREEN_HEIGHT) == glutGet(GLUT_WINDOW_HEIGHT)));
 }
 /* Override attempts to install a reshape handler and install our own instead. */
 void glutReshapeFunc(void (*func)(int width, int height)) {
@@ -131,13 +134,8 @@ void faked_kbfunc(unsigned char key, int x, int y) {
 		glutLeaveMainLoop();
 		break;
 	case 'f':
-		if (fs) {
-			glrw(1280,720);
-			fs = 0;
-		} else {
-			glutFullScreen();
-			fs = 1;
-		}
+		if (fs) glrw(1280,720);
+		else glutFullScreen();
 		break;
 	default:
 		fr_kbfunc(key, x, y);
@@ -208,3 +206,26 @@ void glutMotionFunc(void (*func)(int x, int y)) {
 	real_func(faked_motionfunc);
 }
 #endif
+
+/* Catch the release of Shift, Ctrl, Alt.  If Fieldrunners' callback catches
+ * these, it asserts false and everything blows up.
+ * It's not actually documented that these keys are ever returned by this
+ * callback.  WTF freeglut?
+ */
+void (*fr_specialup)(int key, int x, int y);
+void faked_specialup(int key, int x, int y) {
+	switch (key) {
+	case 112:
+	case 114:
+	case 116:
+		break;
+	default:
+		fr_specialup(key, x, y);
+	}
+}
+void glutSpecialUpFunc(void (*func)(int key, int x, int y)) {
+	static void (*real_func)(void (*func)(int key, int x, int y));
+	real_func = dlsym(RTLD_NEXT, "glutSpecialUpFunc");
+	fr_specialup = func;
+	real_func(faked_specialup);
+}
