@@ -1,25 +1,18 @@
 #!/bin/bash
 if ! thisdir="$(dirname "$(readlink -f "$0")")"
 then	echo "Couldn't find Fieldrunners directory."
+	echo "Either readlink doesn't work, or launch.sh isn't in the Fieldrunners directory."
 	exit 1
 fi
-if ! [[ -f "$thisdir/frfix.so" ]]
-then	echo "frfix.so not found, attempting to build."
-	if ! (cd "$thisdir"; bash build.sh)
-	then	echo "Couldn't build frfix.so.  You may have to run build.sh as root (eg. sudo ./build.sh)"
-		exit 2
-	fi
-fi
+[[ -f "$thisdir/frfix.so" ]] || \
+	echo "Running without frfix.so!  Expect problems.  Run ./build.sh to create frfix.so."
+# on 64-bit machines, kill PulseAudio and load a Pulse-less alsa.conf
 if [[ "$(uname -m)" == "x86_64" ]] && which pulseaudio >/dev/null 2>&1
-then	# avoid trying to load pulse on 64-bit machines.
-	export ALSA_CONFIG_PATH=$thisdir/alsa.conf
+then	export ALSA_CONFIG_PATH=$thisdir/alsa.conf
 	if  pulseaudio --check
 	then	do_pulse=true
-		echo "PulseAudio is running.  Stopping it."
-		if ! pulseaudio --kill
-		then	echo "Couldn't stop PulseAudio."
-			exit 3
-		fi
+		pulseaudio --kill || \
+			echo "Couldn't kill PulseAudio.  Fieldrunners will probably crash."
 	fi
 fi
 if [[ -f "$thisdir/Fieldrunners" ]]
@@ -29,9 +22,8 @@ then	LD_PRELOAD=$thisdir/frfix.so $thisdir/fieldrunners
 else	echo "Unable to find Fieldrunners executable!"
 	exit 4
 fi
-	
 if [[ "$do_pulse" == "true" ]]
-then	echo "Restarting PulseAudio."
-	unset ALSA_CONFIG_PATH
-	pulseaudio --start || echo "Unable to restart PulseAudio."
+then	unset ALSA_CONFIG_PATH
+	pulseaudio --start || \
+		echo "Unable to restart PulseAudio."
 fi
