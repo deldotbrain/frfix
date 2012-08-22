@@ -9,7 +9,7 @@
  *  $ LD_PRELOAD=/path/to/frfix.so /path/to/Fieldrunners
  *
  * Changing -DFIXDELAY=n when building adjusts sound latency; reducing it may
- * cause audio glitches but is otherwise harmless.  48 works well for me, but
+ * cause audio glitches but is otherwise harmless.  44 works well for me, but
  * 1024 is a safe default: it's guaranteed not to be smaller than the default
  * period size on any reasonable driver, (mostly) regardless of sampling rate.
  */
@@ -38,14 +38,10 @@ int snd_pcm_open(snd_pcm_t **pcm,
 }
 
 #ifdef FIXDELAY
-/* This will be the actual callback function that Fieldrunners registers.
- * It'll never be called by ALSA, only by our intermediate callback.
+/* Check if ALSA is in danger of exhausting its buffer, and call Fieldrunners'
+ * callback if so.
  */
 void (*fr_callback)(snd_async_handler_t *ahandler);
-
-/* This is our fake callback.  It checks if ALSA is in danger of exhausting its
- * buffer, and calls Fieldrunners' callback if so.
- */
 void fake_callback(snd_async_handler_t *ahandler) {
 	snd_pcm_sframes_t avail, delay;
 	snd_pcm_t *pcm = snd_async_handler_get_pcm(ahandler);
@@ -55,9 +51,6 @@ void fake_callback(snd_async_handler_t *ahandler) {
 	 * delay checks are meaningless.
 	 */
 	snd_pcm_avail_delay(pcm, &avail, &delay);
-#ifdef LOGDELAY
-	printf("delay: %li\n", delay);
-#endif
 	if (delay < (FIXDELAY)) fr_callback(ahandler);
 }
 
@@ -87,6 +80,8 @@ int snd_async_add_pcm_handler(snd_async_handler_t **handler,
 #include <GL/freeglut.h>
 
 long act_w, act_h, act_xoff, act_yoff;
+//float ptr_xscale, ptr_yscale;
+float ptr_scale;
 char fs = 0;
 
 /* init_manglers calculates and sets an aspect-correct viewport, and stores its
@@ -98,19 +93,23 @@ void init_manglers(int w, int h) {
 	if (w == h * 16/9) {
 		act_w = w;
 		act_h = h;
-		act_yoff = 0;
 		act_xoff = 0;
+		act_yoff = 0;
 	} else if (w < h * 16/9) {
 		act_w = w;
 		act_h = w * 9/16;
-		act_yoff = (h - act_h) / 2;
 		act_xoff = 0;
+		act_yoff = (h - act_h) / 2;
 	} else {
 		act_w = h * 16/9;
 		act_h = h;
-		act_yoff = 0;
 		act_xoff = (w - act_w) / 2;
+		act_yoff = 0;
 	}
+	/*ptr_xscale = 1280.0 / act_w;
+	ptr_yscale = 720.0 / act_h;*/
+	/*if (fs)*/ ptr_scale = ((1280.0/act_w)>(720.0/act_h)?(1280.0/act_w):(720.0/act_h));
+	//else ptr_scale = ((1280.0/act_w)<(720.0/act_h)?(1280.0/act_w):(720.0/act_h));
 	glvp(act_xoff, act_yoff, act_w, act_h);
 }
 /* Override attempts to install a reshape handler and install our own instead. */
@@ -161,10 +160,25 @@ void glutKeyboardFunc(void (*func)(unsigned char key, int x, int y)) {
 /* Mangle the mouse so the cursor lines up with the desktop */
 void (*fr_mousefunc)(int button, int state, int x, int y);
 void faked_mousefunc(int button, int state, int x, int y) {
-	fr_mousefunc(button, state, x-act_xoff, y-act_yoff);
+	if (fs) fr_mousefunc(button, state, x*ptr_scale, y*ptr_scale);
+	else fr_mousefunc(button, state, x-act_xoff, y-act_yoff);
 }
 void (*fr_motionfunc)(int x, int y);
-void faked_motionfunc(int x, int y) { fr_motionfunc(x-act_xoff, y-act_yoff); }
+void faked_motionfunc(int x, int y) {
+	int tx, ty;
+	tx = x - (fs?0:act_xoff);
+	ty = y - (fs?0:act_yoff);
+	tx = tx * ptr_scale;
+	ty = ty * ptr_scale;
+	/* If we're fullscreen, make an effort to constrain pointer to window.
+	 * Otherwise, the cursor can disappear into the letterbox (annoying!)
+	 */
+	if (fs) {
+		if (tx > 1280) glutWarpPointer(act_w, y);
+		if (ty > 720) glutWarpPointer(x, act_h);
+	}
+	fr_motionfunc(tx, ty);
+}
 
 /* Intercept calls for mouse callbacks, and inject our manglers */
 void glutMouseFunc(void (*func)(int button, int state, int x, int y)) {
