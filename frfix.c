@@ -1,10 +1,14 @@
-/* frfix.c: fix sound issues with Fieldrunners
- * This overrides a couple functions, forcing FR to open the system default
- * sound device, and forces a sane amount of delay on the sound (compile
- * without -DFIXDELAY=n to see what I mean).
+/* frfix.c: fix audio & video issues with Fieldrunners
+ *
+ * Audio: a couple functions have been overridden, forcing FR to open the
+ * system default sound device, and forcing a sane amount of delay on the sound
+ * (compile without -DFIXDELAY=n to see what I mean).
+ *
+ * Video: a couple functions have been intercepted to allow resolution changing
+ * and fullscreen support.
  *
  * To build:
- *  $ gcc -DFIXDELAY=1024 -fPIC -shared -m32 `pkg-config --cflags alsa` frfix.c -o frfix.so
+ *  $ gcc -DCHANGERES -DFIXDELAY=1024 -fPIC -shared -m32 `pkg-config --cflags alsa` frfix.c -o frfix.so
  * To launch Fieldrunners (in Bash anyway):
  *  $ LD_PRELOAD=/path/to/frfix.so /path/to/Fieldrunners
  *
@@ -89,23 +93,20 @@ char fs = 0;
 void init_manglers(int w, int h) {
 	static void (*glvp)(GLint x, GLint y, GLsizei width, GLsizei height);
 	if (!glvp) glvp = dlsym(RTLD_NEXT, "glViewport");
-	if (w == h * 16/9) {
-		act_w = w;
-		act_h = h;
-		act_xoff = 0;
-		act_yoff = 0;
-	} else if (w < h * 16/9) {
-		act_w = w;
+	act_w = w;
+	act_h = h;
+	act_xoff = 0;
+	act_yoff = 0;
+	if (w < h * 16/9) {
 		act_h = w * 9/16;
-		act_xoff = 0;
 		act_yoff = (h - act_h) / 2;
-	} else {
+	} else if (w < h * 16/9) {
 		act_w = h * 16/9;
-		act_h = h;
 		act_xoff = (w - act_w) / 2;
-		act_yoff = 0;
 	}
+	/* BRUTEFORCE! */
 	ptr_scale = ((1280.0/act_w)>(720.0/act_h)?(1280.0/act_w):(720.0/act_h));
+	/* glViewport() is NOP'd, use the real thing */
 	glvp(act_xoff, act_yoff, act_w, act_h);
 }
 /* Override attempts to install a reshape handler and install our own instead. */
@@ -157,10 +158,8 @@ void glutKeyboardFunc(void (*func)(unsigned char key, int x, int y)) {
  * windowed, and never disappear into the letterbox when fullscreen.
  */
 void mmangle(int *x, int *y) {
-	*x = *x - (fs?0:act_xoff);
-	*y = *y - (fs?0:act_yoff);
-	*x = *x * ptr_scale;
-	*y = *y * ptr_scale;
+	*x = (*x - (fs?0:act_xoff)) * ptr_scale;
+	*y = (*y - (fs?0:act_yoff)) * ptr_scale;
 	if (fs) {
 		if (*x > 1280) {
 			glutWarpPointer(act_w, *y / ptr_scale);
