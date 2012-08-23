@@ -43,23 +43,30 @@ int snd_pcm_open(snd_pcm_t **pcm,
 /* Check if ALSA is in danger of exhausting its buffer, and call Fieldrunners'
  * callback if so.
  */
+int alsa_is_broken = 0; /* 0 = working, <0 = broken */
+void *fr_audio_private;
+void *fr_pcm;
 void (*fr_callback)(snd_async_handler_t *ahandler);
-void fake_callback(snd_async_handler_t *ahandler) {
+void faked_callback(snd_async_handler_t *ahandler) {
 	snd_pcm_sframes_t avail, delay;
-	snd_pcm_t *pcm = snd_async_handler_get_pcm(ahandler);
 	/* Even though we don't need it, we still read available samples.  If
 	 * we don't, apparently ALSA doesn't synchronize its buffers with the
 	 * hardware, so snd_pcm_delay() returns garbage (4096 always) and our
 	 * delay checks are meaningless.
 	 */
-	snd_pcm_avail_delay(pcm, &avail, &delay);
-	/* 1024 is almost always safe.  On direct hw access (which ALSA hasn't
-	 * done since 2005 or so), period should be 1024 in almost all cases.
-	 * With 48kHz dmix, it should be 940.  This should never let underruns
-	 * happen.
-	 */
-	if (delay < 1024) fr_callback(ahandler);
+	//printf("faked_callback!\n");
+	snd_pcm_avail_delay(fr_pcm, &avail, &delay);
+	//printf("a/d: %i/%i\n", avail, delay);
+	if (delay < ((alsa_is_broken != 0)?4096:1024)) fr_callback(ahandler);
+	//printf("state: %i ", snd_pcm_state(fr_pcm));
+	//snd_pcm_start(fr_pcm);
+	//printf("%i\n", snd_pcm_state(fr_pcm));
 }
+void alsa_callback_caller(int value) {
+	if (fr_pcm) faked_callback(0);
+	glutTimerFunc(10, alsa_callback_caller, 0);
+}
+
 /* Intercept the hook to register Fieldrunners' audio callback, and replace it
  * with our intermediate function instead.
  */
@@ -67,7 +74,6 @@ int snd_async_add_pcm_handler(snd_async_handler_t **handler,
 		snd_pcm_t *pcm,
 		snd_async_callback_t callback,
 		void *private_data) {
-
 	static int (*real_func)
 		(snd_async_handler_t **handler,
 		snd_pcm_t *pcm,
@@ -76,7 +82,26 @@ int snd_async_add_pcm_handler(snd_async_handler_t **handler,
 	if (!real_func) real_func = dlsym(RTLD_NEXT, "snd_async_add_pcm_handler");
 
 	fr_callback = callback;
-	return real_func(handler, pcm, fake_callback, private_data);
+	fr_audio_private = private_data;
+	fr_pcm = pcm;
+	alsa_is_broken = real_func(handler, pcm, faked_callback, private_data);
+	/* If ALSA isn't going to call our callback, make GLUT do it */
+	if (alsa_is_broken != 0) {
+		printf("ALSA is broken...enabling workaround.\n");
+		//glutIdleFunc(alsa_callback_caller);
+		glutTimerFunc(10, alsa_callback_caller, 0);
+	}
+	return 0;
+}
+
+/* If the driver is broken, the handler struct is garbage and we have to wrap
+ * any function that might access it.
+ */
+void *snd_async_handler_get_callback_private(snd_async_handler_t *ahandler) {
+	if (alsa_is_broken != 0) return fr_audio_private;
+	static void *(*real_func)(snd_async_handler_t *ahandler);
+	if (!real_func) real_func = dlsym(RTLD_NEXT, "snd_async_handler_get_callback_private");
+	return real_func(ahandler);
 }
 /*}}}*/
 /*{{{ Video workarounds & associated input workarounds */
