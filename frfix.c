@@ -14,7 +14,6 @@
  * To launch Fieldrunners (in Bash anyway):
  *  $ LD_PRELOAD=/path/to/frfix.so /path/to/Fieldrunners
  *
- * vim:fdm=marker
  */
 #define _GNU_SOURCE
 #include <asoundlib.h>
@@ -224,3 +223,5 @@ void glutSpecialUpFunc(void (*func)(int key, int x, int y)) {
 	real_func(faked_specialup);
 }
 /*}}}*/
+/* vim:fdm=marker
+ */
