@@ -44,6 +44,7 @@ int snd_pcm_open(snd_pcm_t **pcm,
  * callback if so.
  */
 int alsa_is_broken = 0; /* 0 = working, <0 = broken */
+int we_are_running = -1;
 void *fr_audio_private;
 void *fr_pcm;
 void (*fr_callback)(snd_async_handler_t *ahandler);
@@ -64,7 +65,7 @@ void faked_callback(snd_async_handler_t *ahandler) {
 }
 void alsa_callback_caller(int value) {
 	if (fr_pcm) faked_callback(0);
-	glutTimerFunc(10, alsa_callback_caller, 0);
+	//glutTimerFunc(10, alsa_callback_caller, 0);
 }
 
 /* Intercept the hook to register Fieldrunners' audio callback, and replace it
@@ -84,15 +85,23 @@ int snd_async_add_pcm_handler(snd_async_handler_t **handler,
 	fr_callback = callback;
 	fr_audio_private = private_data;
 	fr_pcm = pcm;
-	alsa_is_broken = real_func(handler, pcm, faked_callback, private_data);
+	//alsa_is_broken = real_func(handler, pcm, faked_callback, private_data);
+	alsa_is_broken = -1;
 	/* If ALSA isn't going to call our callback, make GLUT do it */
 	if (alsa_is_broken != 0) {
 		printf("ALSA is broken...enabling workaround.\n");
 		// Neither of these work well.  They both drop out during load screens.
 		//glutIdleFunc(alsa_callback_caller);
-		glutTimerFunc(10, alsa_callback_caller, 0);
+		//glutTimerFunc(10, alsa_callback_caller, 0);
 	}
 	return 0;
+}
+/* Override glutMainLoop to call the FR audio callback as needed */
+void glutMainLoop(void) {
+	while (we_are_running) {
+		if (alsa_is_broken != 0) alsa_callback_caller(0);
+		glutMainLoopEvent();
+	}
 }
 
 /* If the driver is broken, the handler struct is garbage and we have to wrap
