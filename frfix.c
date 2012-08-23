@@ -1,27 +1,29 @@
-/* frfix.c: fix audio & video issues with Fieldrunners
+/* frfix.c: fix a few v1.0 bugs with Fieldrunners
  *
  * Audio: a couple functions have been overridden, forcing FR to open the
- * system default sound device, and forcing a sane amount of delay on the sound
- * (compile without -DFIXDELAY=n to see what I mean).
+ * system default sound device, and forcing a sane latency on the sound.
  *
  * Video: a couple functions have been intercepted to allow resolution changing
  * and fullscreen support.
  *
+ * Misc: a keyboard-handler has been intercepted to keep the game from crashing
+ * when Shift, Ctrl, or Alt are pressed.
+ *
  * To build:
- *  $ gcc -DCHANGERES -DFIXDELAY=1024 -fPIC -shared -m32 `pkg-config --cflags alsa` frfix.c -o frfix.so
+ *  $ gcc -fPIC -shared -m32 `pkg-config --cflags alsa` frfix.c -o frfix.so
  * To launch Fieldrunners (in Bash anyway):
  *  $ LD_PRELOAD=/path/to/frfix.so /path/to/Fieldrunners
  *
- * Changing -DFIXDELAY=n when building adjusts sound latency; reducing it may
- * cause audio glitches but is otherwise harmless.  44 works well for me, but
- * 1024 is a safe default: it's guaranteed not to be smaller than the default
- * period size on any reasonable driver, (mostly) regardless of sampling rate.
+ * vim:fdm=marker
  */
 #define _GNU_SOURCE
 #include <asoundlib.h>
 #include <dlfcn.h>
-#include <stdio.h>
+#include <GL/gl.h>
+#include <GL/glut.h>
+#include <GL/freeglut.h>
 
+/*{{{ Audio workaround */
 /* Fieldrunners opens 'plughw:0,0' by default.  Instead, let's open 'default'
  * like users expect.  'default' will automatically map to PulseAudio, the
  * system dmix, or whatever the user has configured as their default; 'default'
@@ -40,8 +42,6 @@ int snd_pcm_open(snd_pcm_t **pcm,
 	if (!real_func) real_func = dlsym(RTLD_NEXT, "snd_pcm_open");
 	return real_func(pcm, "default", stream, mode);
 }
-
-#ifdef FIXDELAY
 /* Check if ALSA is in danger of exhausting its buffer, and call Fieldrunners'
  * callback if so.
  */
@@ -55,9 +55,10 @@ void fake_callback(snd_async_handler_t *ahandler) {
 	 * delay checks are meaningless.
 	 */
 	snd_pcm_avail_delay(pcm, &avail, &delay);
-	if (delay < (FIXDELAY)) fr_callback(ahandler);
+	if (delay < (1024)) fr_callback(ahandler);
 }
-
+/*}}}*/
+/*{{{ Video workarounds & associated input workarounds */
 /* Intercept the hook to register Fieldrunners' audio callback, and replace it
  * with our intermediate function instead.
  */
@@ -76,17 +77,13 @@ int snd_async_add_pcm_handler(snd_async_handler_t **handler,
 	fr_callback = callback;
 	return real_func(handler, pcm, fake_callback, private_data);
 }
-#endif
-
-#ifdef CHANGERES
-#include <GL/gl.h>
-#include <GL/glut.h>
-#include <GL/freeglut.h>
 
 long act_w, act_h, act_xoff, act_yoff;
 float ptr_scale;
 char fs = 0;
-
+/* We don't want these affecting our display.  Just ignore them instead. */
+void glViewport(GLint x, GLint y, GLsizei width, GLsizei height) { return; }
+void glutReshapeWindow(int width, int height) { return; }
 /* init_manglers calculates and sets an aspect-correct viewport, and stores its
  * variables for the mouse manglers.
  */
@@ -112,15 +109,12 @@ void init_manglers(int w, int h) {
 	fs = ((glutGet(GLUT_SCREEN_WIDTH) == glutGet(GLUT_WINDOW_WIDTH)) &&
 		(glutGet(GLUT_SCREEN_HEIGHT) == glutGet(GLUT_WINDOW_HEIGHT)));
 }
-/* Override attempts to install a reshape handler and install our own instead. */
+/* Intercept attempts to install a reshape handler and install our own instead. */
 void glutReshapeFunc(void (*func)(int width, int height)) {
 	static void (*real_func)(void (*func)(int width, int height));
 	if (!real_func) real_func = dlsym(RTLD_NEXT, "glutReshapeFunc");
 	real_func(init_manglers);
 }
-/* We don't want these affecting our display.  Just ignore them instead. */
-void glViewport(GLint x, GLint y, GLsizei width, GLsizei height) { return; }
-void glutReshapeWindow(int width, int height) { return; }
 
 /* Add 'q'->quit and 'f'->toggle fullscreen keys, otherwise call Fieldrunners'
  * keyboard callback.
@@ -134,6 +128,7 @@ void faked_kbfunc(unsigned char key, int x, int y) {
 		glutLeaveMainLoop();
 		break;
 	case 'f':
+		/* glutReshapeWindow is NOP'd, use the real thing */
 		if (fs) glrw(1280,720);
 		else glutFullScreen();
 		break;
@@ -141,8 +136,7 @@ void faked_kbfunc(unsigned char key, int x, int y) {
 		fr_kbfunc(key, x, y);
 	}
 }
-
-/* Intercept calls for keyboard callbacks, and inject our function to check for
+/* Intercept calls for keyboard callbacks and inject our function to check for
  * extra keybindings.
  */
 void glutKeyboardFunc(void (*func)(unsigned char key, int x, int y)) {
@@ -185,8 +179,7 @@ void faked_motionfunc(int x, int y) {
 	mmangle(&x, &y);
 	fr_motionfunc(x, y);
 }
-
-/* Intercept calls for mouse callbacks, and inject our manglers */
+/* Intercept calls for mouse callbacks and inject our manglers */
 void glutMouseFunc(void (*func)(int button, int state, int x, int y)) {
 	static void (*real_func)(void (*func)(int button, int state, int x, int y));
 	if (!real_func) real_func = dlsym(RTLD_NEXT, "glutMouseFunc");
@@ -205,8 +198,8 @@ void glutMotionFunc(void (*func)(int x, int y)) {
 	fr_motionfunc = func;
 	real_func(faked_motionfunc);
 }
-#endif
-
+/*}}}*/
+/*{{{ SpecialUp crash workaround */
 /* Catch the release of Shift, Ctrl, Alt.  If Fieldrunners' callback catches
  * these, it asserts false and everything blows up.
  * It's not actually documented that these keys are ever returned by this
@@ -223,9 +216,11 @@ void faked_specialup(int key, int x, int y) {
 		fr_specialup(key, x, y);
 	}
 }
+/* Intercept calls for special keypress handlers and inject our handler */
 void glutSpecialUpFunc(void (*func)(int key, int x, int y)) {
 	static void (*real_func)(void (*func)(int key, int x, int y));
 	real_func = dlsym(RTLD_NEXT, "glutSpecialUpFunc");
 	fr_specialup = func;
 	real_func(faked_specialup);
 }
+/*}}}*/
