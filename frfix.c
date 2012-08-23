@@ -13,7 +13,6 @@
  *  $ gcc -fPIC -shared -m32 `pkg-config --cflags alsa` frfix.c -o frfix.so
  * To launch Fieldrunners (in Bash anyway):
  *  $ LD_PRELOAD=/path/to/frfix.so /path/to/Fieldrunners
- *
  */
 #define _GNU_SOURCE
 #include <asoundlib.h>
@@ -61,8 +60,6 @@ void fake_callback(snd_async_handler_t *ahandler) {
 	 */
 	if (delay < 1024) fr_callback(ahandler);
 }
-/*}}}*/
-/*{{{ Video workarounds & associated input workarounds */
 /* Intercept the hook to register Fieldrunners' audio callback, and replace it
  * with our intermediate function instead.
  */
@@ -81,17 +78,18 @@ int snd_async_add_pcm_handler(snd_async_handler_t **handler,
 	fr_callback = callback;
 	return real_func(handler, pcm, fake_callback, private_data);
 }
-
+/*}}}*/
+/*{{{ Video workarounds & associated input workarounds */
 long act_w, act_h, act_xoff, act_yoff;
 float ptr_scale;
 char fs = 0;
-/* We don't want these affecting our display.  Just ignore them instead. */
+
+/* We don't want Fieldrunners to revert our viewport settings. */
 void glViewport(GLint x, GLint y, GLsizei width, GLsizei height) { return; }
-void glutReshapeWindow(int width, int height) { return; }
-/* init_manglers calculates and sets an aspect-correct viewport, and stores its
- * variables for the mouse manglers.
+/* handle_reshape calculates and sets an aspect-correct viewport, and stores its
+ * variables for the mouse mangler.
  */
-void init_manglers(int w, int h) {
+void handle_reshape(int w, int h) {
 	static void (*glvp)(GLint x, GLint y, GLsizei width, GLsizei height);
 	if (!glvp) glvp = dlsym(RTLD_NEXT, "glViewport");
 	act_w = w;
@@ -117,7 +115,7 @@ void init_manglers(int w, int h) {
 void glutReshapeFunc(void (*func)(int width, int height)) {
 	static void (*real_func)(void (*func)(int width, int height));
 	if (!real_func) real_func = dlsym(RTLD_NEXT, "glutReshapeFunc");
-	real_func(init_manglers);
+	real_func(handle_reshape);
 }
 
 /* Add 'q'->quit and 'f'->toggle fullscreen keys, otherwise call Fieldrunners'
@@ -125,15 +123,12 @@ void glutReshapeFunc(void (*func)(int width, int height)) {
  */
 void (*fr_kbfunc)(unsigned char key, int x, int y);
 void faked_kbfunc(unsigned char key, int x, int y) {
-	static void (*glrw)(int width, int height);
-	if (!glrw) glrw = dlsym(RTLD_NEXT, "glutReshapeWindow");
 	switch (key) {
 	case 'q':
 		glutLeaveMainLoop();
 		break;
 	case 'f':
-		/* glutReshapeWindow is NOP'd, use the real thing */
-		if (fs) glrw(1280,720);
+		if (fs) glutReshapeWindow(1280,720);
 		else glutFullScreen();
 		break;
 	default:
@@ -153,7 +148,7 @@ void glutKeyboardFunc(void (*func)(unsigned char key, int x, int y)) {
 /* Mangle & bounds-check the pointer.  It should line up with the desktop when
  * windowed, and never disappear into the letterbox when fullscreen.
  */
-void mmangle(int *x, int *y) {
+void mangle_mouse(int *x, int *y) {
 	*x = (*x - (fs?0:act_xoff)) * ptr_scale;
 	*y = (*y - (fs?0:act_yoff)) * ptr_scale;
 	if (fs) {
@@ -170,17 +165,17 @@ void mmangle(int *x, int *y) {
 /* Mangle the mouse so the cursor lines up with the desktop */
 void (*fr_mousefunc)(int button, int state, int x, int y);
 void faked_mousefunc(int button, int state, int x, int y) {
-	mmangle(&x, &y);
+	mangle_mouse(&x, &y);
 	fr_mousefunc(button, state, x, y);
 }
 void (*fr_pmotionfunc)(int x, int y);
 void faked_pmotionfunc(int x, int y) {
-	mmangle(&x, &y);
+	mangle_mouse(&x, &y);
 	fr_pmotionfunc(x, y);
 }
 void (*fr_motionfunc)(int x, int y);
 void faked_motionfunc(int x, int y) {
-	mmangle(&x, &y);
+	mangle_mouse(&x, &y);
 	fr_motionfunc(x, y);
 }
 /* Intercept calls for mouse callbacks and inject our manglers */
