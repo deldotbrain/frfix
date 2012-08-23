@@ -54,7 +54,12 @@ void fake_callback(snd_async_handler_t *ahandler) {
 	 * delay checks are meaningless.
 	 */
 	snd_pcm_avail_delay(pcm, &avail, &delay);
-	if (delay < (1024)) fr_callback(ahandler);
+	/* 1024 is almost always safe.  On direct hw access (which ALSA hasn't
+	 * done since 2005 or so), period should be 1024 in almost all cases.
+	 * With 48kHz dmix, it should be 940.  This should never let underruns
+	 * happen.
+	 */
+	if (delay < 1024) fr_callback(ahandler);
 }
 /*}}}*/
 /*{{{ Video workarounds & associated input workarounds */
@@ -223,5 +228,6 @@ void glutSpecialUpFunc(void (*func)(int key, int x, int y)) {
 	real_func(faked_specialup);
 }
 /*}}}*/
+
 /* vim:fdm=marker
  */
