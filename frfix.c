@@ -88,6 +88,7 @@ int snd_async_add_pcm_handler(snd_async_handler_t **handler,
 	/* If ALSA isn't going to call our callback, make GLUT do it */
 	if (alsa_is_broken != 0) {
 		printf("ALSA is broken...enabling workaround.\n");
+		// Neither of these work well.  They both drop out during load screens.
 		//glutIdleFunc(alsa_callback_caller);
 		glutTimerFunc(10, alsa_callback_caller, 0);
 	}
