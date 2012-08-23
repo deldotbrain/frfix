@@ -101,7 +101,7 @@ void init_manglers(int w, int h) {
 	if (w < h * 16/9) {
 		act_h = w * 9/16;
 		act_yoff = (h - act_h) / 2;
-	} else if (w < h * 16/9) {
+	} else if (w > h * 16/9) {
 		act_w = h * 16/9;
 		act_xoff = (w - act_w) / 2;
 	}
