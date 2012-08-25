@@ -96,15 +96,15 @@ void handle_reshape(int w, int h) {
 	act_h = h;
 	act_xoff = 0;
 	act_yoff = 0;
+	ptr_scale = 1280.0/w;
 	if (w < h * 16/9) {
 		act_h = w * 9/16;
 		act_yoff = (h - act_h) / 2;
 	} else if (w > h * 16/9) {
 		act_w = h * 16/9;
 		act_xoff = (w - act_w) / 2;
+		ptr_scale = 720.0/h;
 	}
-	/* BRUTEFORCE! */
-	ptr_scale = ((1280.0/act_w)>(720.0/act_h)?(1280.0/act_w):(720.0/act_h));
 	/* glViewport() is NOP'd, use the real thing */
 	glvp(act_xoff, act_yoff, act_w, act_h);
 	/* Check if we're fullscreened and need letterbox workarounds */
