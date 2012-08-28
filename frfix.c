@@ -206,14 +206,7 @@ void glutMotionFunc(void (*func)(int x, int y)) {
  */
 void (*fr_specialup)(int key, int x, int y);
 void faked_specialup(int key, int x, int y) {
-	switch (key) {
-	case 112:
-	case 114:
-	case 116:
-		break;
-	default:
-		fr_specialup(key, x, y);
-	}
+	if ((key < 112) || (key > 117)) fr_specialup(key, x, y);
 }
 /* Intercept calls for special keypress handlers and inject our handler */
 void glutSpecialUpFunc(void (*func)(int key, int x, int y)) {
