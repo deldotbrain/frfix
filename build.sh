@@ -7,6 +7,6 @@ fi
 if gcc -Wall -fPIC -shared -Os -s `pkg-config --cflags alsa` $cflags -o frfix.so frfix.c "$@"
 then	echo "Done."
 else	echo "Failed.  Falling back to prebuilt frfix.so..."
-	mv $src frfix.so || \
+	cp $src frfix.so || \
 		echo "Failed.  Do you have permissions to write to the current directory?"
 fi
