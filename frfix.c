@@ -118,22 +118,14 @@ void glutReshapeFunc(void (*func)(int width, int height)) {
 	real_func(handle_reshape);
 }
 
-/* Add 'q'->quit and 'f'->toggle fullscreen keys, otherwise call Fieldrunners'
- * keyboard callback.
+/* 'f'->toggle fullscreen key, otherwise call Fieldrunners' keyboard callback.
  */
 void (*fr_kbfunc)(unsigned char key, int x, int y);
 void faked_kbfunc(unsigned char key, int x, int y) {
-	switch (key) {
-	case 'q':
-		glutLeaveMainLoop();
-		break;
-	case 'f':
+	if (key == 'f') {
 		if (fs) glutReshapeWindow(1280,720);
 		else glutFullScreen();
-		break;
-	default:
-		fr_kbfunc(key, x, y);
-	}
+	} else fr_kbfunc(key, x, y);
 }
 /* Intercept calls for keyboard callbacks and inject our function to check for
  * extra keybindings.
