@@ -94,7 +94,7 @@ int snd_async_add_pcm_handler(snd_async_handler_t **handler,
 	fr_audio_private = private_data;
 	fr_pcm = pcm;
 	if (real_func(handler, pcm, faked_callback, private_data) != 0) {
-		printf("ALSA is broken...enabling workaround.\n");
+		printf("ALSA won't do callbacks...enabling workaround.\n");
 		/* Start a timer to regularly call our handler. */
 		setup_alsa_timer();
 	}
@@ -126,7 +126,7 @@ void setup_alsa_timer() {
 	};
 	if (timer_create(CLOCK_MONOTONIC, &sev, &alsa_timer) == 0) {
 		timer_settime(alsa_timer, 0, &its, 0);
-	} else printf("Unable to create audio timers.  Audio won't work.\n");
+	} else printf("Unable to create audio timer.  Audio won't work.\n");
 }
 /* Dummy function to call our audio callback */
 void alsa_callback_caller(union sigval sv) { faked_callback(NULL); }
