@@ -20,6 +20,8 @@
 #include <GL/gl.h>
 #include <GL/glut.h>
 #include <GL/freeglut.h>
+#include <time.h>
+#include <signal.h>
 
 /*{{{ Audio workaround */
 /* Fieldrunners opens 'plughw:0,0' by default.  Instead, let's open 'default'
@@ -27,6 +29,24 @@
  * system dmix, or whatever the user has configured as their default; 'default'
  * will almost always play nice with other applications.
  */
+void *fr_audio_private;
+void *fr_pcm;
+void (*fr_callback)(snd_async_handler_t *ahandler);
+
+int snd_pcm_open(snd_pcm_t **pcm,
+		const char *name,
+		snd_pcm_stream_t stream,
+		int mode);
+int snd_async_add_pcm_handler(snd_async_handler_t **handler,
+		snd_pcm_t *pcm,
+		snd_async_callback_t callback,
+		void *private_data);
+void *snd_async_handler_get_callback_private(snd_async_handler_t *ahandler);
+
+void alsa_callback_caller(union sigval sv);
+void faked_callback(snd_async_handler_t *ahandler);
+void setup_alsa_timer();
+
 int snd_pcm_open(snd_pcm_t **pcm,
 		const char *name,
 		snd_pcm_stream_t stream,
@@ -40,32 +60,20 @@ int snd_pcm_open(snd_pcm_t **pcm,
 	if (!real_func) real_func = dlsym(RTLD_NEXT, "snd_pcm_open");
 	return real_func(pcm, "default", stream, mode);
 }
+
 /* Check if ALSA is in danger of exhausting its buffer, and call Fieldrunners'
  * callback if so.
  */
-int alsa_is_broken = 0; /* 0 = working, <0 = broken */
-int we_are_running = -1;
-void *fr_audio_private;
-void *fr_pcm;
-void (*fr_callback)(snd_async_handler_t *ahandler);
 void faked_callback(snd_async_handler_t *ahandler) {
 	snd_pcm_sframes_t avail, delay;
 	/* Even though we don't need it, we still read available samples.  If
 	 * we don't, apparently ALSA doesn't synchronize its buffers with the
-	 * hardware, so snd_pcm_delay() returns garbage (4096 always) and our
+	 * hardware, and snd_pcm_delay() returns garbage (4096 always) and our
 	 * delay checks are meaningless.
 	 */
-	//printf("faked_callback!\n");
 	snd_pcm_avail_delay(fr_pcm, &avail, &delay);
-	//printf("a/d: %i/%i\n", avail, delay);
-	if (delay < ((alsa_is_broken != 0)?4096:1024)) fr_callback(ahandler);
-	//printf("state: %i ", snd_pcm_state(fr_pcm));
-	//snd_pcm_start(fr_pcm);
-	//printf("%i\n", snd_pcm_state(fr_pcm));
-}
-void alsa_callback_caller(int value) {
-	if (fr_pcm) faked_callback(0);
-	//glutTimerFunc(10, alsa_callback_caller, 0);
+	/* PulseAudio likes long buffers. */
+	if (delay < 2048) fr_callback(ahandler);
 }
 
 /* Intercept the hook to register Fieldrunners' audio callback, and replace it
@@ -85,39 +93,66 @@ int snd_async_add_pcm_handler(snd_async_handler_t **handler,
 	fr_callback = callback;
 	fr_audio_private = private_data;
 	fr_pcm = pcm;
-	//alsa_is_broken = real_func(handler, pcm, faked_callback, private_data);
-	alsa_is_broken = -1;
-	/* If ALSA isn't going to call our callback, make GLUT do it */
-	if (alsa_is_broken != 0) {
+	if (real_func(handler, pcm, faked_callback, private_data) != 0) {
 		printf("ALSA is broken...enabling workaround.\n");
-		// Neither of these work well.  They both drop out during load screens.
-		//glutIdleFunc(alsa_callback_caller);
-		//glutTimerFunc(10, alsa_callback_caller, 0);
+		/* Start a timer to regularly call our handler. */
+		setup_alsa_timer();
 	}
 	return 0;
 }
-/* Override glutMainLoop to call the FR audio callback as needed */
-void glutMainLoop(void) {
-	while (we_are_running) {
-		if (alsa_is_broken != 0) alsa_callback_caller(0);
-		glutMainLoopEvent();
-	}
-}
 
-/* If the driver is broken, the handler struct is garbage and we have to wrap
- * any function that might access it.
+/* Since we may be circumventing ALSA's async_handler stuff (and feeding FR a
+ * garbage pointer that shouldn't ever be used), it's easier to track this
+ * ourselves.
  */
 void *snd_async_handler_get_callback_private(snd_async_handler_t *ahandler) {
-	if (alsa_is_broken != 0) return fr_audio_private;
-	static void *(*real_func)(snd_async_handler_t *ahandler);
-	if (!real_func) real_func = dlsym(RTLD_NEXT, "snd_async_handler_get_callback_private");
-	return real_func(ahandler);
+	return fr_audio_private;
 }
+
+/* Set up a timer to fire every 10ms, calling alsa_callback_caller().  If we're
+ * using PulseAudio, this is the only way to regularly call FR's audio
+ * callback.
+ */
+void setup_alsa_timer() {
+	timer_t alsa_timer;
+	struct sigevent sev;
+	sev.sigev_notify = SIGEV_THREAD;
+	sev.sigev_value.sival_ptr = NULL;
+	sev.sigev_notify_function = alsa_callback_caller;
+	sev.sigev_notify_attributes = NULL;
+	struct itimerspec its = {
+		.it_interval =  { .tv_sec = 0, .tv_nsec = 10000000 },
+		.it_value = { .tv_sec = 0, .tv_nsec = 10000000 }
+	};
+	if (timer_create(CLOCK_MONOTONIC, &sev, &alsa_timer) == 0) {
+		timer_settime(alsa_timer, 0, &its, 0);
+	} else printf("Unable to create audio timers.  Audio won't work.\n");
+}
+/* Dummy function to call our audio callback */
+void alsa_callback_caller(union sigval sv) { faked_callback(NULL); }
 /*}}}*/
 /*{{{ Video workarounds & associated input workarounds */
 long act_w, act_h, act_xoff, act_yoff;
 float ptr_scale;
 char fs = 0;
+void (*fr_kbfunc)(unsigned char key, int x, int y);
+void (*fr_mousefunc)(int button, int state, int x, int y);
+void (*fr_pmotionfunc)(int x, int y);
+void (*fr_motionfunc)(int x, int y);
+
+void glutReshapeFunc(void (*func)(int width, int height));
+void glutKeyboardFunc(void (*func)(unsigned char key, int x, int y));
+void glutMouseFunc(void (*func)(int button, int state, int x, int y));
+void glutPassiveMotionFunc(void (*func)(int x, int y));
+void glutMotionFunc(void (*func)(int x, int y));
+void glViewport(GLint x, GLint y, GLsizei width, GLsizei height);
+
+void handle_reshape(int w, int h);
+void faked_kbfunc(unsigned char key, int x, int y);
+void mangle_mouse(int *x, int *y);
+void faked_mousefunc(int button, int state, int x, int y);
+void faked_pmotionfunc(int x, int y);
+void faked_motionfunc(int x, int y);
 
 /* We don't want Fieldrunners to revert our viewport settings. */
 void glViewport(GLint x, GLint y, GLsizei width, GLsizei height) { return; }
@@ -232,6 +267,11 @@ void glutMotionFunc(void (*func)(int x, int y)) {
  * callback.  WTF freeglut?
  */
 void (*fr_specialup)(int key, int x, int y);
+
+void glutSpecialUpFunc(void (*func)(int key, int x, int y));
+
+void faked_specialup(int key, int x, int y);
+
 void faked_specialup(int key, int x, int y) {
 	if ((key < 112) || (key > 117)) fr_specialup(key, x, y);
 }
