@@ -42,6 +42,7 @@ int snd_async_add_pcm_handler(snd_async_handler_t **handler,
 		snd_async_callback_t callback,
 		void *private_data);
 void *snd_async_handler_get_callback_private(snd_async_handler_t *ahandler);
+snd_pcm_t *snd_async_handler_get_pcm(snd_async_handler_t *ahandler);
 
 void alsa_callback_caller(union sigval sv);
 void faked_callback(snd_async_handler_t *ahandler);
@@ -107,6 +108,9 @@ int snd_async_add_pcm_handler(snd_async_handler_t **handler,
  */
 void *snd_async_handler_get_callback_private(snd_async_handler_t *ahandler) {
 	return fr_audio_private;
+}
+snd_pcm_t *snd_async_handler_get_pcm(snd_async_handler_t *ahandler) {
+	return fr_pcm;
 }
 
 /* Set up a timer to fire every 10ms, calling alsa_callback_caller().  If we're
