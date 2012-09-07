@@ -30,8 +30,13 @@
  * will almost always play nice with other applications.
  */
 void *fr_audio_private;
-void *fr_pcm;
+snd_pcm_t *fr_pcm;
 void (*fr_callback)(snd_async_handler_t *ahandler);
+timer_t alsa_timer;
+struct itimerspec enable_timer = {
+	.it_interval = { .tv_sec = 0, .tv_nsec = 0 },
+	.it_value = { .tv_sec = 0, .tv_nsec = 10000000 }
+};
 
 int snd_pcm_open(snd_pcm_t **pcm,
 		const char *name,
@@ -44,8 +49,8 @@ int snd_async_add_pcm_handler(snd_async_handler_t **handler,
 void *snd_async_handler_get_callback_private(snd_async_handler_t *ahandler);
 snd_pcm_t *snd_async_handler_get_pcm(snd_async_handler_t *ahandler);
 
-void alsa_callback_caller(union sigval sv);
 void faked_callback(snd_async_handler_t *ahandler);
+void alsa_callback_caller(union sigval sv);
 void setup_alsa_timer();
 
 int snd_pcm_open(snd_pcm_t **pcm,
@@ -62,19 +67,74 @@ int snd_pcm_open(snd_pcm_t **pcm,
 	return real_func(pcm, "default", stream, mode);
 }
 
-/* Check if ALSA is in danger of exhausting its buffer, and call Fieldrunners'
- * callback if so.
- */
+#if 0
+snd_pcm_sframes_t snd_pcm_avail_update(snd_pcm_t *pcm) {
+	/*
+	static snd_pcm_sframes_t (*real_func)(snd_pcm_t *pcm);
+	if (!real_func) real_func = dlsym(RTLD_NEXT, "snd_pcm_avail_update");
+	*/
+	snd_pcm_sframes_t ret;
+	ret = snd_pcm_avail(pcm);
+	//ret = real_func(pcm);
+	printf("snd_pcm_avail_update: %li\n", ret);
+	//return (ret > 4096) ? 4096 : ret;
+	return ret;
+}
+
+snd_pcm_sframes_t snd_pcm_writei(snd_pcm_t *pcm, const void *buffer, snd_pcm_uframes_t size) {
+	static snd_pcm_sframes_t (*real_func)
+		(snd_pcm_t *pcm, const void *buffer, snd_pcm_uframes_t size);
+	if (!real_func) real_func = dlsym(RTLD_NEXT, "snd_pcm_writei");
+	snd_pcm_sframes_t ret;
+	ret = real_func(pcm, buffer, size);
+	printf("writei %lu = %li\n", size, ret);
+	return ret;
+}
+#endif
+
 void faked_callback(snd_async_handler_t *ahandler) {
 	snd_pcm_sframes_t avail, delay;
-	/* Even though we don't need it, we still read available samples.  If
-	 * we don't, apparently ALSA doesn't synchronize its buffers with the
-	 * hardware, and snd_pcm_delay() returns garbage (4096 always) and our
-	 * delay checks are meaningless.
-	 */
 	snd_pcm_avail_delay(fr_pcm, &avail, &delay);
-	/* PulseAudio likes long buffers. */
-	if (delay < 2048) fr_callback(ahandler);
+	printf("state: %i, avail: %li, delay: %li\n", snd_pcm_state(fr_pcm), avail, delay);
+	//if (avail > 4096) {
+	//if (delay < 4096) {
+		fr_callback(NULL);
+	//}
+}
+
+/* Since FR calls this function with its default value, let's cannibalize it &
+ * fix the buffer size with it.
+ */
+int snd_pcm_hw_params_set_rate_resample(snd_pcm_t *pcm, snd_pcm_hw_params_t *params, unsigned int val) {
+	/*static int (*real_func)(snd_pcm_t *pcm, snd_pcm_hw_params_t *params, unsigned int val);
+	if (!real_func) real_func = dlsym(RTLD_NEXT, "snd_pcm_hw_params_set_rate_resample");
+	real_func(pcm, params, val);*/
+	snd_pcm_uframes_t period_size = 1024;
+	unsigned int periods_min = 8, periods_max = 12;
+	snd_pcm_uframes_t buffer_min, buffer_max;
+	unsigned int ui;
+	snd_pcm_uframes_t uf;
+	int dir; /* = 0;
+	uf = 4096;
+	printf("pt: %i\n", snd_pcm_hw_params_set_period_time(pcm, params, uf, dir));
+	printf("pt: %lu, %i\n", uf, dir);
+	*/
+	dir = 0;
+	printf("pt: %i\n", snd_pcm_hw_params_set_period_size_near(pcm, params, &period_size, &dir));
+	printf("pt: %lu, %i\n", period_size, dir);
+	dir = 0;
+	printf("pm: %i\n", snd_pcm_hw_params_set_periods_min(pcm, params, &periods_min, &dir));
+	printf("pm: %u, %i\n", periods_min, dir);
+	dir = 0;
+	printf("pM: %i\n", snd_pcm_hw_params_set_periods_max(pcm, params, &periods_max, &dir));
+	printf("pM: %u, %i\n", periods_max, dir);
+	buffer_min = period_size * periods_min;
+	buffer_max = period_size * periods_max;
+	printf("bm: %i\n", snd_pcm_hw_params_set_buffer_size_min(pcm, params, &buffer_min));
+	printf("bm: %lu\n", buffer_min);
+	printf("bM: %i\n", snd_pcm_hw_params_set_buffer_size_max(pcm, params, &buffer_max));
+	printf("bM: %lu\n", buffer_max);
+	return 0;
 }
 
 /* Intercept the hook to register Fieldrunners' audio callback, and replace it
@@ -90,6 +150,7 @@ int snd_async_add_pcm_handler(snd_async_handler_t **handler,
 		snd_async_callback_t callback,
 		void *private_data);
 	if (!real_func) real_func = dlsym(RTLD_NEXT, "snd_async_add_pcm_handler");
+	printf("async handler at %p\n", callback);
 
 	fr_callback = callback;
 	fr_audio_private = private_data;
@@ -118,22 +179,21 @@ snd_pcm_t *snd_async_handler_get_pcm(snd_async_handler_t *ahandler) {
  * callback.
  */
 void setup_alsa_timer() {
-	timer_t alsa_timer;
 	struct sigevent sev;
 	sev.sigev_notify = SIGEV_THREAD;
 	sev.sigev_value.sival_ptr = NULL;
 	sev.sigev_notify_function = alsa_callback_caller;
 	sev.sigev_notify_attributes = NULL;
-	struct itimerspec its = {
-		.it_interval =  { .tv_sec = 0, .tv_nsec = 10000000 },
-		.it_value = { .tv_sec = 0, .tv_nsec = 10000000 }
-	};
 	if (timer_create(CLOCK_MONOTONIC, &sev, &alsa_timer) == 0) {
-		timer_settime(alsa_timer, 0, &its, 0);
+		timer_settime(alsa_timer, 0, &enable_timer, 0);
 	} else printf("Unable to create audio timer.  Audio won't work.\n");
 }
 /* Dummy function to call our audio callback */
-void alsa_callback_caller(union sigval sv) { faked_callback(NULL); }
+void alsa_callback_caller(union sigval sv) { 
+	//fr_callback(NULL);
+	faked_callback(NULL);
+	timer_settime(alsa_timer, 0, &enable_timer, 0);
+}
 /*}}}*/
 /*{{{ Video workarounds & associated input workarounds */
 long act_w, act_h, act_xoff, act_yoff;
