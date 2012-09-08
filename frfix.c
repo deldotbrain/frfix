@@ -32,11 +32,6 @@
 void *fr_audio_private;
 snd_pcm_t *fr_pcm;
 void (*fr_callback)(snd_async_handler_t *ahandler);
-timer_t alsa_timer;
-struct itimerspec enable_timer = {
-	.it_interval = { .tv_sec = 0, .tv_nsec = 0 },
-	.it_value = { .tv_sec = 0, .tv_nsec = 10000000 }
-};
 
 int snd_pcm_open(snd_pcm_t **pcm,
 		const char *name,
@@ -46,6 +41,9 @@ int snd_async_add_pcm_handler(snd_async_handler_t **handler,
 		snd_pcm_t *pcm,
 		snd_async_callback_t callback,
 		void *private_data);
+int snd_pcm_avail_delay(snd_pcm_t *pcm,
+		snd_pcm_sframes_t *availp,
+		snd_pcm_sframes_t *delayp);
 void *snd_async_handler_get_callback_private(snd_async_handler_t *ahandler);
 snd_pcm_t *snd_async_handler_get_pcm(snd_async_handler_t *ahandler);
 int snd_pcm_hw_params_set_rate_resample(snd_pcm_t *pcm,
@@ -84,27 +82,22 @@ int snd_pcm_hw_params_set_rate_resample(snd_pcm_t *pcm,
 	int dir;
 	/* FR only plays audio correctly with a period size of 1024.  Force it,
 	 * and set an appropriate number of periods in order to keep playback
-	 * smooth but not induce undue delay.  FR's choice to write in
-	 * 4096-sample chunks (>20ms!) isn't great, since it raises the minimum
-	 * latency to a very noticeable level.
+	 * smooth but not induce undue delay.
+	 *
+	 * If any of these fail, sound will not play.  I should probably check
+	 * their return values...
 	 */
-	printf("munging hw_params...\n");
 	dir = 0;
-	printf("pt: %i\n", snd_pcm_hw_params_set_period_size_near(pcm, params, &period_size, &dir));
-	printf("pt: %lu, %i\n", period_size, dir);
+	snd_pcm_hw_params_set_period_size_near(pcm, params, &period_size, &dir);
 	dir = 0;
-	printf("pm: %i\n", snd_pcm_hw_params_set_periods_min(pcm, params, &periods_min, &dir));
-	printf("pm: %u, %i\n", periods_min, dir);
+	snd_pcm_hw_params_set_periods_min(pcm, params, &periods_min, &dir);
 	dir = 0;
-	printf("pM: %i\n", snd_pcm_hw_params_set_periods_max(pcm, params, &periods_max, &dir));
-	printf("pM: %u, %i\n", periods_max, dir);
+	snd_pcm_hw_params_set_periods_max(pcm, params, &periods_max, &dir);
 	/* Size our buffer appropriately for our periods. */
 	buffer_min = period_size * periods_min;
 	buffer_max = period_size * periods_max;
-	printf("bm: %i\n", snd_pcm_hw_params_set_buffer_size_min(pcm, params, &buffer_min));
-	printf("bm: %lu\n", buffer_min);
-	printf("bM: %i\n", snd_pcm_hw_params_set_buffer_size_max(pcm, params, &buffer_max));
-	printf("bM: %lu\n", buffer_max);
+	snd_pcm_hw_params_set_buffer_size_min(pcm, params, &buffer_min);
+	snd_pcm_hw_params_set_buffer_size_max(pcm, params, &buffer_max);
 	return 0;
 }
 
@@ -134,6 +127,22 @@ int snd_async_add_pcm_handler(snd_async_handler_t **handler,
 	return 0;
 }
 
+/* The 8/30 update included a previous fix that happens to break compatibility
+ * with PulseAudio.  Give the test a dummy value so that FR's audio callback
+ * always runs.  That (delay < X) test was definitely the wrong way to fix the
+ * latency.  Sorry for misleading you guys at Subatomic.  :(
+ */
+int snd_pcm_avail_delay(snd_pcm_t *pcm,
+		snd_pcm_sframes_t *availp,
+		snd_pcm_sframes_t *delayp) {
+	static int (*real_func)(snd_pcm_t *pcm,
+		snd_pcm_sframes_t *availp,
+		snd_pcm_sframes_t *delayp);
+	if (!real_func) real_func = dlsym(RTLD_NEXT, "snd_pcm_avail_delay");
+	real_func(pcm, availp, delayp);
+	*delayp = 0;
+	return 0;
+}
 /* Since we may be circumventing ALSA's async_handler stuff (and feeding FR a
  * garbage pointer that shouldn't ever be used), it's easier to track this
  * ourselves.
@@ -151,6 +160,11 @@ snd_pcm_t *snd_async_handler_get_pcm(snd_async_handler_t *ahandler) {
  */
 void setup_alsa_timer() {
 	struct sigevent sev;
+	timer_t alsa_timer;
+	struct itimerspec enable_timer = {
+		.it_interval = { .tv_sec = 0, .tv_nsec = 10000000 },
+		.it_value = { .tv_sec = 0, .tv_nsec = 10000000 }
+	};
 	sev.sigev_notify = SIGEV_THREAD;
 	sev.sigev_value.sival_ptr = NULL;
 	sev.sigev_notify_function = alsa_callback_caller;
@@ -160,10 +174,7 @@ void setup_alsa_timer() {
 	} else printf("Unable to create audio timer.  Audio won't work.\n");
 }
 /* Dummy function to call our audio callback */
-void alsa_callback_caller(union sigval sv) { 
-	fr_callback(NULL);
-	timer_settime(alsa_timer, 0, &enable_timer, 0);
-}
+void alsa_callback_caller(union sigval sv) { fr_callback(NULL); }
 /*}}}*/
 /*{{{ Video workarounds & associated input workarounds */
 long act_w, act_h, act_xoff, act_yoff;
