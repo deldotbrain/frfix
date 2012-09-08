@@ -73,7 +73,6 @@ int snd_pcm_open(snd_pcm_t **pcm,
 /* Since FR calls this function with its default value, let's cannibalize it &
  * fix the buffer size with it.
  */
-#if 0
 int snd_pcm_hw_params_set_rate_resample(snd_pcm_t *pcm,
 		snd_pcm_hw_params_t *params,
 		unsigned int val) {
@@ -108,7 +107,6 @@ int snd_pcm_hw_params_set_rate_resample(snd_pcm_t *pcm,
 	printf("bM: %lu\n", buffer_max);
 	return 0;
 }
-#endif
 
 /* Intercept the hook to register Fieldrunners' audio callback since it may
  * fail.  In the event of a failure, resort to setting up a timer that calls
