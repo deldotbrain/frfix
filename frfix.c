@@ -23,12 +23,7 @@
 #include <time.h>
 #include <signal.h>
 
-/*{{{ Audio workaround */
-/* Fieldrunners opens 'plughw:0,0' by default.  Instead, let's open 'default'
- * like users expect.  'default' will automatically map to PulseAudio, the
- * system dmix, or whatever the user has configured as their default; 'default'
- * will almost always play nice with other applications.
- */
+/*{{{ Audio workarounds */
 void *fr_audio_private;
 snd_pcm_t *fr_pcm;
 void (*fr_callback)(snd_async_handler_t *ahandler);
@@ -68,32 +63,28 @@ int snd_pcm_open(snd_pcm_t **pcm,
 	return real_func(pcm, "default", stream, mode);
 }
 
-/* Since FR calls this function with its default value, let's cannibalize it &
- * fix the buffer size with it.
+/* FR only plays audio correctly with a period size of 1024.  FR needs at least
+ * 8192 samples to play without stuttering, but without PulseAudio, more than
+ * that are required to avoid an "cannot set sample rate" error.  Beyond that,
+ * fewer periods means lower latency & no need to wrap around the audio
+ * callback.
+ *
+ * If any of these settings fail, sound will not play.  I should probably check
+ * their return values...
  */
 int snd_pcm_hw_params_set_rate_resample(snd_pcm_t *pcm,
 		snd_pcm_hw_params_t *params,
 		unsigned int val) {
-	/* FR only works with 1024 samples per period. */
 	snd_pcm_uframes_t period_size = 1024;
-	/* FR needs >= 8192 samples to play back smoothly. */
 	unsigned int periods_min = 8, periods_max = 12;
 	snd_pcm_uframes_t buffer_min, buffer_max;
 	int dir;
-	/* FR only plays audio correctly with a period size of 1024.  Force it,
-	 * and set an appropriate number of periods in order to keep playback
-	 * smooth but not induce undue delay.
-	 *
-	 * If any of these fail, sound will not play.  I should probably check
-	 * their return values...
-	 */
 	dir = 0;
 	snd_pcm_hw_params_set_period_size_near(pcm, params, &period_size, &dir);
 	dir = 0;
 	snd_pcm_hw_params_set_periods_min(pcm, params, &periods_min, &dir);
 	dir = 0;
 	snd_pcm_hw_params_set_periods_max(pcm, params, &periods_max, &dir);
-	/* Size our buffer appropriately for our periods. */
 	buffer_min = period_size * periods_min;
 	buffer_max = period_size * periods_max;
 	snd_pcm_hw_params_set_buffer_size_min(pcm, params, &buffer_min);
