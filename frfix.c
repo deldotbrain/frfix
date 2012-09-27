@@ -63,32 +63,42 @@ int snd_pcm_open(snd_pcm_t **pcm,
 	return real_func(pcm, "default", stream, mode);
 }
 
-/* FR only plays audio correctly with a period size of 1024.  FR needs at least
- * 8192 samples to play without stuttering, but without PulseAudio, more than
- * that are required to avoid an "cannot set sample rate" error.  Beyond that,
- * fewer periods means lower latency & no need to wrap around the audio
- * callback.
+/* FR only plays audio correctly with a period size of 1024.  FR needs >8192
+ * samples for its native (ALSA) code to work well without stuttering.  We can
+ * get away with as little as 1024 for ALSA or 2048 for PA if we use the timer
+ * workaround, which is now the default because of this.
  *
- * If any of these settings fail, sound will not play.  I should probably check
- * their return values...
+ * This has been changed to _set_channels.  This means that FR will do all of
+ * its configuration before we start mangling settings.
  */
-int snd_pcm_hw_params_set_rate_resample(snd_pcm_t *pcm,
+int snd_pcm_hw_params_set_channels(snd_pcm_t *pcm,
 		snd_pcm_hw_params_t *params,
 		unsigned int val) {
+	//unsigned int rate = 44100;
 	snd_pcm_uframes_t period_size = 1024;
-	unsigned int periods_min = 8, periods_max = 12;
-	snd_pcm_uframes_t buffer_min, buffer_max;
+	unsigned int periods = 1;
+	snd_pcm_uframes_t buffer;
 	int dir;
+
+	static int (*real_func)(snd_pcm_t *pcm,
+		snd_pcm_hw_params_t *params,
+		unsigned int val);
+	if (!real_func) real_func = dlsym(RTLD_NEXT, "snd_pcm_hw_params_set_channels");
+	real_func(pcm, params, val);
+
+	//snd_pcm_hw_params_set_channels(pcm, params, 2);
+	//snd_pcm_hw_params_set_format(pcm, params, SND_PCM_FORMAT_S16_LE);
+	//dir = 0;
+	//snd_pcm_hw_params_set_rate_near(pcm, params, &rate, &dir);
+	//printf("rate is %u, %i\n", rate, dir);
 	dir = 0;
 	snd_pcm_hw_params_set_period_size_near(pcm, params, &period_size, &dir);
+	//printf("period_size is %lu, %i\n", period_size, dir);
 	dir = 0;
-	snd_pcm_hw_params_set_periods_min(pcm, params, &periods_min, &dir);
-	dir = 0;
-	snd_pcm_hw_params_set_periods_max(pcm, params, &periods_max, &dir);
-	buffer_min = period_size * periods_min;
-	buffer_max = period_size * periods_max;
-	snd_pcm_hw_params_set_buffer_size_min(pcm, params, &buffer_min);
-	snd_pcm_hw_params_set_buffer_size_max(pcm, params, &buffer_max);
+	snd_pcm_hw_params_set_periods_near(pcm, params, &periods, &dir);
+	//printf("using %u, %i periods\n", periods, dir);
+	snd_pcm_hw_params_set_buffer_size_first(pcm, params, &buffer);
+	//printf("ended up with %lu buffer.\n", buffer);
 	return 0;
 }
 
@@ -110,11 +120,9 @@ int snd_async_add_pcm_handler(snd_async_handler_t **handler,
 	fr_callback = callback;
 	fr_audio_private = private_data;
 	fr_pcm = pcm;
-	if (real_func(handler, pcm, fr_callback, private_data) != 0) {
-		printf("ALSA won't do callbacks...enabling workaround.\n");
-		/* Start a timer to regularly call our handler. */
-		setup_alsa_timer();
-	}
+	/* Instead of relying on ALSA to notify us every so often, start a
+	 * timer to regularly call our handler. */
+	setup_alsa_timer();
 	return 0;
 }
 
