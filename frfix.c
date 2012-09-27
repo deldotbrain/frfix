@@ -60,7 +60,7 @@ int snd_pcm_open(snd_pcm_t **pcm,
 		snd_pcm_stream_t stream,
 		int mode);
 	if (!real_func) real_func = dlsym(RTLD_NEXT, "snd_pcm_open");
-	return real_func(pcm, "default", stream, mode);
+	return real_func(pcm, getenv("FRDEV"), stream, mode);
 }
 
 /* FR only plays audio correctly with a period size of 1024.  FR needs >8192
@@ -75,7 +75,7 @@ int snd_pcm_hw_params_set_channels(snd_pcm_t *pcm,
 		snd_pcm_hw_params_t *params,
 		unsigned int val) {
 	//unsigned int rate = 44100;
-	snd_pcm_uframes_t period_size = 1024;
+	//snd_pcm_uframes_t period_size = 1024;
 	unsigned int periods = 1;
 	snd_pcm_uframes_t buffer;
 	int dir;
@@ -91,14 +91,16 @@ int snd_pcm_hw_params_set_channels(snd_pcm_t *pcm,
 	//dir = 0;
 	//snd_pcm_hw_params_set_rate_near(pcm, params, &rate, &dir);
 	//printf("rate is %u, %i\n", rate, dir);
-	dir = 0;
-	snd_pcm_hw_params_set_period_size_near(pcm, params, &period_size, &dir);
+	//dir = 0;
+	//snd_pcm_hw_params_set_period_size_near(pcm, params, &period_size, &dir);
 	//printf("period_size is %lu, %i\n", period_size, dir);
-	dir = 0;
-	snd_pcm_hw_params_set_periods_near(pcm, params, &periods, &dir);
+	//dir = 0;
+	//snd_pcm_hw_params_set_periods_near(pcm, params, &periods, &dir);
 	//printf("using %u, %i periods\n", periods, dir);
+	buffer = 1024;
+	snd_pcm_hw_params_set_buffer_size_min(pcm, params, &buffer);
 	snd_pcm_hw_params_set_buffer_size_first(pcm, params, &buffer);
-	//printf("ended up with %lu buffer.\n", buffer);
+	printf("ended up with %lu buffer.\n", buffer);
 	return 0;
 }
 
