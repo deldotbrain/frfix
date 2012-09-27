@@ -58,7 +58,7 @@ int snd_pcm_open(snd_pcm_t **pcm,
 		snd_pcm_stream_t stream,
 		int mode);
 	if (!real_func) real_func = dlsym(RTLD_NEXT, "snd_pcm_open");
-	return real_func(pcm, getenv("FRDEV"), stream, mode);
+	return real_func(pcm, "default", stream, mode);
 }
 
 /*
@@ -109,8 +109,8 @@ int snd_async_add_pcm_handler(snd_async_handler_t **handler,
 	fr_callback = callback;
 	fr_audio_private = private_data;
 	fr_pcm = pcm;
-	/* Instead of relying on ALSA to notify us every so often, start a
-	 * timer to regularly call our handler. */
+	/* Instead of relying on ALSA to notify us every period, start a timer
+	 * to regularly call our handler. */
 	setup_alsa_timer();
 	return 0;
 }
@@ -119,8 +119,12 @@ int snd_async_add_pcm_handler(snd_async_handler_t **handler,
  * with PulseAudio.  Give the test a dummy value so that FR's audio callback
  * always runs.  That (delay < X) test was definitely the wrong way to fix the
  * latency.  Sorry if I mislead you, Subatomic. :(
+ *
+ * This override shouldn't be needed since the buffer should now be small
+ * enough that delay is always < 1024, but somewhere, there's bound to be a
+ * distribution with a modified PulseAudio package that will break without
+ * this.  Smart money says Debian is that distro.
  */
-#if 0
 int snd_pcm_avail_delay(snd_pcm_t *pcm,
 		snd_pcm_sframes_t *availp,
 		snd_pcm_sframes_t *delayp) {
@@ -132,15 +136,6 @@ int snd_pcm_avail_delay(snd_pcm_t *pcm,
 	*delayp = 0;
 	return 0;
 }
-#else
-int snd_pcm_avail_delay(snd_pcm_t *pcm,
-		snd_pcm_sframes_t *availp,
-		snd_pcm_sframes_t *delayp) {
-	*availp = 0xf4240; /* a million */
-	*delayp = 0x32;
-	return 0;
-}
-#endif
 
 /* Since we may be circumventing ALSA's async_handler stuff (and feeding FR a
  * garbage pointer that shouldn't ever be used), it's easier to track this
