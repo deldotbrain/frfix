@@ -17,6 +17,7 @@
 #include <GL/freeglut.h>
 #include <time.h>
 #include <signal.h>
+#include <pthread.h>
 
 /*{{{ Audio workarounds */
 /* FR-supplied data */
@@ -44,7 +45,7 @@ snd_pcm_t *snd_async_handler_get_pcm(snd_async_handler_t *ahandler);
 
 /* Support functions for the timer workaround */
 void setup_alsa_timer();
-void alsa_callback_caller(union sigval sv);
+void alsa_callback_caller(int arg);
 
 /* Open 'default', no matter what FR tells us to do.
  */
@@ -59,6 +60,7 @@ int snd_pcm_open(snd_pcm_t **pcm,
 		int mode);
 	if (!real_func) real_func = dlsym(RTLD_NEXT, "snd_pcm_open");
 	return real_func(pcm, "default", stream, mode);
+	//return real_func(pcm, "hw:2,0", stream, mode);
 }
 
 /*
@@ -99,13 +101,6 @@ int snd_async_add_pcm_handler(snd_async_handler_t **handler,
 		snd_pcm_t *pcm,
 		snd_async_callback_t callback,
 		void *private_data) {
-	static int (*real_func)
-		(snd_async_handler_t **handler,
-		snd_pcm_t *pcm,
-		snd_async_callback_t callback,
-		void *private_data);
-	if (!real_func) real_func = dlsym(RTLD_NEXT, "snd_async_add_pcm_handler");
-
 	fr_callback = callback;
 	fr_audio_private = private_data;
 	fr_pcm = pcm;
@@ -152,28 +147,21 @@ snd_pcm_t *snd_async_handler_get_pcm(snd_async_handler_t *ahandler) {
  * using PulseAudio, this is the only way to regularly call FR's audio
  * callback.
  *
- * This isn't really done right, but it's not wrong enough to cause problems.
- * It results in a new thread being created for every sound update, then
- * destroyed moments later.  The right way would be to create a new thread and
- * signal it every time we need an update.
+ * Using signals should be marginally more effective than threads.
  */
+void alsa_callback_caller(int arg) { fr_callback(NULL); }
+
 void setup_alsa_timer() {
-	struct sigevent sev;
 	timer_t alsa_timer;
 	struct itimerspec enable_timer = {
 		.it_interval = { .tv_sec = 0, .tv_nsec = 10000000 },
 		.it_value = { .tv_sec = 0, .tv_nsec = 10000000 }
 	};
-	sev.sigev_notify = SIGEV_THREAD;
-	sev.sigev_value.sival_ptr = NULL;
-	sev.sigev_notify_function = alsa_callback_caller;
-	sev.sigev_notify_attributes = NULL;
-	if (timer_create(CLOCK_MONOTONIC, &sev, &alsa_timer) == 0) {
-		timer_settime(alsa_timer, 0, &enable_timer, 0);
-	} else printf("Unable to create audio timer.  Audio won't work.\n");
+
+	signal(SIGALRM, &alsa_callback_caller);
+	timer_create(CLOCK_MONOTONIC, NULL, &alsa_timer);
+	timer_settime(alsa_timer, 0, &enable_timer, 0);
 }
-/* Dummy function to call our audio callback */
-void alsa_callback_caller(union sigval sv) { fr_callback(NULL); }
 /*}}}*/
 /*{{{ Video workarounds & associated input workarounds */
 /* FR-supplied callbacks */
