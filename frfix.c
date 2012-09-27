@@ -8,11 +8,6 @@
  *
  * Misc: a keyboard-handler has been intercepted to keep the game from crashing
  * when Shift, Ctrl, or Alt are pressed.
- *
- * To build:
- *  $ gcc -fPIC -shared -m32 `pkg-config --cflags alsa` frfix.c -o frfix.so
- * To launch Fieldrunners (in Bash anyway):
- *  $ LD_PRELOAD=/path/to/frfix.so /path/to/Fieldrunners
  */
 #define _GNU_SOURCE
 #include <asoundlib.h>
@@ -24,14 +19,19 @@
 #include <signal.h>
 
 /*{{{ Audio workarounds */
+/* FR-supplied data */
 void *fr_audio_private;
 snd_pcm_t *fr_pcm;
 void (*fr_callback)(snd_async_handler_t *ahandler);
 
+/* Overridden ALSA functions */
 int snd_pcm_open(snd_pcm_t **pcm,
 		const char *name,
 		snd_pcm_stream_t stream,
 		int mode);
+int snd_pcm_hw_params_set_channels(snd_pcm_t *pcm,
+		snd_pcm_hw_params_t *params,
+		unsigned int val);
 int snd_async_add_pcm_handler(snd_async_handler_t **handler,
 		snd_pcm_t *pcm,
 		snd_async_callback_t callback,
@@ -41,10 +41,8 @@ int snd_pcm_avail_delay(snd_pcm_t *pcm,
 		snd_pcm_sframes_t *delayp);
 void *snd_async_handler_get_callback_private(snd_async_handler_t *ahandler);
 snd_pcm_t *snd_async_handler_get_pcm(snd_async_handler_t *ahandler);
-int snd_pcm_hw_params_set_rate_resample(snd_pcm_t *pcm,
-		snd_pcm_hw_params_t *params,
-		unsigned int val);
 
+/* Support functions for the timer workaround */
 void setup_alsa_timer();
 void alsa_callback_caller(union sigval sv);
 
@@ -63,40 +61,29 @@ int snd_pcm_open(snd_pcm_t **pcm,
 	return real_func(pcm, getenv("FRDEV"), stream, mode);
 }
 
-/* FR only plays audio correctly with a period size of 1024.  FR needs >8192
- * samples for its native (ALSA) code to work well without stuttering.  We can
- * get away with as little as 1024 for ALSA or 2048 for PA if we use the timer
- * workaround, which is now the default because of this.
+/*
+ * This used to use _set_rate_resample because it didn't require looking up the
+ * real function, but has been changed to _set_channels.  This means that FR
+ * will do all of its configuration before we start mangling settings.  Ideally
+ * keeps FR's calls from failing & disabling audio.
  *
- * This has been changed to _set_channels.  This means that FR will do all of
- * its configuration before we start mangling settings.
+ * The number of parameters that are set has been grossly reduced.  We use the
+ * smallest available buffer that's above a minimum size needed to avoid
+ * glitches.  These sizes are roughly:
+ * FR->ALSA: 1024
+ * FR->ALSA->PA: 512
  */
 int snd_pcm_hw_params_set_channels(snd_pcm_t *pcm,
 		snd_pcm_hw_params_t *params,
 		unsigned int val) {
-	//unsigned int rate = 44100;
-	//snd_pcm_uframes_t period_size = 1024;
-	unsigned int periods = 1;
-	snd_pcm_uframes_t buffer;
-	int dir;
-
 	static int (*real_func)(snd_pcm_t *pcm,
 		snd_pcm_hw_params_t *params,
 		unsigned int val);
+	snd_pcm_uframes_t buffer;
+
 	if (!real_func) real_func = dlsym(RTLD_NEXT, "snd_pcm_hw_params_set_channels");
 	real_func(pcm, params, val);
 
-	//snd_pcm_hw_params_set_channels(pcm, params, 2);
-	//snd_pcm_hw_params_set_format(pcm, params, SND_PCM_FORMAT_S16_LE);
-	//dir = 0;
-	//snd_pcm_hw_params_set_rate_near(pcm, params, &rate, &dir);
-	//printf("rate is %u, %i\n", rate, dir);
-	//dir = 0;
-	//snd_pcm_hw_params_set_period_size_near(pcm, params, &period_size, &dir);
-	//printf("period_size is %lu, %i\n", period_size, dir);
-	//dir = 0;
-	//snd_pcm_hw_params_set_periods_near(pcm, params, &periods, &dir);
-	//printf("using %u, %i periods\n", periods, dir);
 	buffer = 1024;
 	snd_pcm_hw_params_set_buffer_size_min(pcm, params, &buffer);
 	snd_pcm_hw_params_set_buffer_size_first(pcm, params, &buffer);
@@ -131,8 +118,9 @@ int snd_async_add_pcm_handler(snd_async_handler_t **handler,
 /* The 8/30 update included a previous fix that happens to break compatibility
  * with PulseAudio.  Give the test a dummy value so that FR's audio callback
  * always runs.  That (delay < X) test was definitely the wrong way to fix the
- * latency.  Sorry for misleading you guys at Subatomic.  :(
+ * latency.  Sorry if I mislead you, Subatomic. :(
  */
+#if 0
 int snd_pcm_avail_delay(snd_pcm_t *pcm,
 		snd_pcm_sframes_t *availp,
 		snd_pcm_sframes_t *delayp) {
@@ -144,6 +132,16 @@ int snd_pcm_avail_delay(snd_pcm_t *pcm,
 	*delayp = 0;
 	return 0;
 }
+#else
+int snd_pcm_avail_delay(snd_pcm_t *pcm,
+		snd_pcm_sframes_t *availp,
+		snd_pcm_sframes_t *delayp) {
+	*availp = 0xf4240; /* a million */
+	*delayp = 0x32;
+	return 0;
+}
+#endif
+
 /* Since we may be circumventing ALSA's async_handler stuff (and feeding FR a
  * garbage pointer that shouldn't ever be used), it's easier to track this
  * ourselves.
@@ -158,6 +156,11 @@ snd_pcm_t *snd_async_handler_get_pcm(snd_async_handler_t *ahandler) {
 /* Set up a timer to fire every 10ms, calling alsa_callback_caller().  If we're
  * using PulseAudio, this is the only way to regularly call FR's audio
  * callback.
+ *
+ * This isn't really done right, but it's not wrong enough to cause problems.
+ * It results in a new thread being created for every sound update, then
+ * destroyed moments later.  The right way would be to create a new thread and
+ * signal it every time we need an update.
  */
 void setup_alsa_timer() {
 	struct sigevent sev;
@@ -178,14 +181,13 @@ void setup_alsa_timer() {
 void alsa_callback_caller(union sigval sv) { fr_callback(NULL); }
 /*}}}*/
 /*{{{ Video workarounds & associated input workarounds */
-long act_w, act_h, act_xoff, act_yoff;
-float ptr_scale;
-char fs = 0;
+/* FR-supplied callbacks */
 void (*fr_kbfunc)(unsigned char key, int x, int y);
 void (*fr_mousefunc)(int button, int state, int x, int y);
 void (*fr_pmotionfunc)(int x, int y);
 void (*fr_motionfunc)(int x, int y);
 
+/* Overridden GL(UT) functions */
 void glutReshapeFunc(void (*func)(int width, int height));
 void glutKeyboardFunc(void (*func)(unsigned char key, int x, int y));
 void glutMouseFunc(void (*func)(int button, int state, int x, int y));
@@ -193,6 +195,7 @@ void glutPassiveMotionFunc(void (*func)(int x, int y));
 void glutMotionFunc(void (*func)(int x, int y));
 void glViewport(GLint x, GLint y, GLsizei width, GLsizei height);
 
+/* Intermediate callback functions; support functions */
 void handle_reshape(int w, int h);
 void faked_kbfunc(unsigned char key, int x, int y);
 void mangle_mouse(int *x, int *y);
@@ -200,8 +203,16 @@ void faked_mousefunc(int button, int state, int x, int y);
 void faked_pmotionfunc(int x, int y);
 void faked_motionfunc(int x, int y);
 
-/* We don't want Fieldrunners to revert our viewport settings. */
+/* Mouse mangler parameters */
+long act_w, act_h, act_xoff, act_yoff;
+float ptr_scale;
+char fs = 0;
+
+/* We don't want Fieldrunners to revert our viewport settings.  Disable
+ * glViewport, and look it up where it's needed.
+ */
 void glViewport(GLint x, GLint y, GLsizei width, GLsizei height) { return; }
+
 /* handle_reshape calculates and sets an aspect-correct viewport, and stores its
  * variables for the mouse mangler.
  */
@@ -223,7 +234,10 @@ void handle_reshape(int w, int h) {
 	}
 	/* glViewport() is NOP'd, use the real thing */
 	glvp(act_xoff, act_yoff, act_w, act_h);
-	/* Check if we're fullscreened and need letterbox workarounds */
+	/* Check if we're fullscreened and need letterbox workarounds.  There's
+	 * not really a good way to check this, but the check we use is a good
+	 * compromise.
+	 */
 	fs = ((glutGet(GLUT_SCREEN_WIDTH) == glutGet(GLUT_WINDOW_WIDTH)) &&
 		(glutGet(GLUT_SCREEN_HEIGHT) == glutGet(GLUT_WINDOW_HEIGHT)));
 }
@@ -234,7 +248,8 @@ void glutReshapeFunc(void (*func)(int width, int height)) {
 	real_func(handle_reshape);
 }
 
-/* 'f'->toggle fullscreen key, otherwise call Fieldrunners' keyboard callback.
+/* Our keyboard handler, used for new keybindings:
+ * 'f'->toggle fullscreen key, otherwise call Fieldrunners' keyboard callback.
  */
 void (*fr_kbfunc)(unsigned char key, int x, int y);
 void faked_kbfunc(unsigned char key, int x, int y) {
@@ -270,7 +285,9 @@ void mangle_mouse(int *x, int *y) {
 		}
 	}
 }
-/* Mangle the mouse so the cursor lines up with the desktop */
+/* Mangle the mouse so the cursor lines up with the desktop, then call FR's
+ * associated callback with the adjusted coordinates.
+ */
 void (*fr_mousefunc)(int button, int state, int x, int y);
 void faked_mousefunc(int button, int state, int x, int y) {
 	mangle_mouse(&x, &y);
@@ -309,8 +326,10 @@ void glutMotionFunc(void (*func)(int x, int y)) {
 /*{{{ SpecialUp crash workaround */
 /* Catch the release of Shift, Ctrl, Alt.  If Fieldrunners' callback catches
  * these, it asserts false and everything blows up.
+ *
  * It's not actually documented that these keys are ever returned by this
- * callback.  WTF freeglut?
+ * callback, and is specifically recommended to use a different function to
+ * check them.  WTF freeglut?
  */
 void (*fr_specialup)(int key, int x, int y);
 
