@@ -60,7 +60,6 @@ int snd_pcm_open(snd_pcm_t **pcm,
 		int mode);
 	if (!real_func) real_func = dlsym(RTLD_NEXT, "snd_pcm_open");
 	return real_func(pcm, "default", stream, mode);
-	//return real_func(pcm, "hw:2,0", stream, mode);
 }
 
 /*
@@ -93,9 +92,9 @@ int snd_pcm_hw_params_set_channels(snd_pcm_t *pcm,
 	return 0;
 }
 
-/* Intercept the hook to register Fieldrunners' audio callback since it may
- * fail.  In the event of a failure, resort to setting up a timer that calls
- * the callback fast enough to keep ALSA's buffers full.
+/* Intercept the hook to register Fieldrunners' audio callback and use our own
+ * functions instead.  This allows for lower latency for ALSA without
+ * introducing glitches, and works around PulseAudio's lack of async code.
  */
 int snd_async_add_pcm_handler(snd_async_handler_t **handler,
 		snd_pcm_t *pcm,
@@ -104,21 +103,17 @@ int snd_async_add_pcm_handler(snd_async_handler_t **handler,
 	fr_callback = callback;
 	fr_audio_private = private_data;
 	fr_pcm = pcm;
-	/* Instead of relying on ALSA to notify us every period, start a timer
-	 * to regularly call our handler. */
 	setup_alsa_timer();
 	return 0;
 }
 
-/* The 8/30 update included a previous fix that happens to break compatibility
- * with PulseAudio.  Give the test a dummy value so that FR's audio callback
- * always runs.  That (delay < X) test was definitely the wrong way to fix the
- * latency.  Sorry if I mislead you, Subatomic. :(
- *
- * This override shouldn't be needed since the buffer should now be small
- * enough that delay is always < 1024, but somewhere, there's bound to be a
- * distribution with a modified PulseAudio package that will break without
- * this.  Smart money says Debian is that distro.
+/* The 8/30 update introduced a check to ensure that audio latency wasn't
+ * getting out of hand.  Unfortunately, it may break PulseAudio if ALSA is
+ * using a larger buffer than it should.  In theory, the new configuration code
+ * means that delay will never be >1024, and the delay check won't cause any
+ * problems, but somewhere, there's bound to be a distribution with a modified
+ * PulseAudio package that will break without this.  The smart money is on
+ * Debian being that distro.
  */
 int snd_pcm_avail_delay(snd_pcm_t *pcm,
 		snd_pcm_sframes_t *availp,
@@ -215,7 +210,6 @@ void handle_reshape(int w, int h) {
 		act_xoff = (w - act_w) / 2;
 		ptr_scale = 720.0/h;
 	}
-	/* glViewport() is NOP'd, use the real thing */
 	glvp(act_xoff, act_yoff, act_w, act_h);
 	/* Check if we're fullscreened and need letterbox workarounds.  There's
 	 * not really a good way to check this, but the check we use is a good
@@ -312,7 +306,7 @@ void glutMotionFunc(void (*func)(int x, int y)) {
  *
  * It's not actually documented that these keys are ever returned by this
  * callback, and is specifically recommended to use a different function to
- * check them.  WTF freeglut?
+ * check for them.  WTF freeglut?
  */
 void (*fr_specialup)(int key, int x, int y);
 
