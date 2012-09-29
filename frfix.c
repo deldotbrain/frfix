@@ -93,8 +93,9 @@ int snd_pcm_hw_params_set_channels(snd_pcm_t *pcm,
 }
 
 /* Intercept the hook to register Fieldrunners' audio callback and use our own
- * functions instead.  This allows for lower latency for ALSA without
- * introducing glitches, and works around PulseAudio's lack of async code.
+ * functions instead.  Since this calls the callback more frequently than ALSA
+ * would, it allows for lower latency without introducing glitches, and works
+ * around PulseAudio's lack of async code.
  */
 int snd_async_add_pcm_handler(snd_async_handler_t **handler,
 		snd_pcm_t *pcm,
@@ -110,10 +111,12 @@ int snd_async_add_pcm_handler(snd_async_handler_t **handler,
 /* The 8/30 update introduced a check to ensure that audio latency wasn't
  * getting out of hand.  Unfortunately, it may break PulseAudio if ALSA is
  * using a larger buffer than it should.  In theory, the new configuration code
- * means that delay will never be >1024, and the delay check won't cause any
- * problems, but somewhere, there's bound to be a distribution with a modified
- * PulseAudio package that will break without this.  The smart money is on
- * Debian being that distro.
+ * means that buffer sizes will be reasonable, and therefore delay will never
+ * be >1024, and the delay check won't cause any problems.
+ *
+ * Somewhere, there's bound to be a distribution with a modified PulseAudio
+ * package that will break without this.  The smart money is on Debian being
+ * that distro.
  */
 int snd_pcm_avail_delay(snd_pcm_t *pcm,
 		snd_pcm_sframes_t *availp,
