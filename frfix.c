@@ -23,10 +23,6 @@
 #ifndef FRDEV
 #define FRDEV "default"
 #endif
-/* ms betweeen callback calls */
-#ifndef CBFREQ
-#define CBFREQ 5
-#endif
 
 /*{{{ Audio workarounds */
 /* FR-supplied data */
@@ -104,11 +100,11 @@ int snd_pcm_hw_params_set_channels(snd_pcm_t *pcm,
  * PulseAudio doesn't support ALSA's async interface, but we can support it by
  * faking the interface.  ALSA calls its callbacks every period, requiring
  * additional periods, each of which may be 20ms or more.  We can call the
- * callbacks however frequently we want, allowing for smaller buffers and lower
- * latency.  This is abused
+ * callbacks however frequently we want.  This is abused to reduce buffer size
+ * and latency by as much as 75%.
  *
- * Using signals should be marginally more effective than the new thread for
- * every callback that was used previously.
+ * Using signals should be marginally more effective than creating a new thread for
+ * every callback (which should have crashed the game!).
  */
 int snd_async_add_pcm_handler(snd_async_handler_t **handler,
 		snd_pcm_t *pcm,
