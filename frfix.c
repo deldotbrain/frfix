@@ -19,6 +19,15 @@
 #include <signal.h>
 #include <pthread.h>
 
+/* Useful for debugging when you have 3 sound cards installed :D */
+#ifndef FRDEV
+#define FRDEV "default"
+#endif
+/* ms betweeen callback calls */
+#ifndef CBFREQ
+#define CBFREQ 5
+#endif
+
 /*{{{ Audio workarounds */
 /* FR-supplied data */
 void *fr_audio_private;
@@ -44,7 +53,6 @@ void *snd_async_handler_get_callback_private(snd_async_handler_t *ahandler);
 snd_pcm_t *snd_async_handler_get_pcm(snd_async_handler_t *ahandler);
 
 /* Support functions for the timer workaround */
-void setup_alsa_timer();
 void alsa_callback_caller(int arg);
 
 /* Open 'default', no matter what FR tells us to do.
@@ -59,7 +67,7 @@ int snd_pcm_open(snd_pcm_t **pcm,
 		snd_pcm_stream_t stream,
 		int mode);
 	if (!real_func) real_func = dlsym(RTLD_NEXT, "snd_pcm_open");
-	return real_func(pcm, "default", stream, mode);
+	return real_func(pcm, FRDEV, stream, mode);
 }
 
 /*
@@ -70,9 +78,8 @@ int snd_pcm_open(snd_pcm_t **pcm,
  *
  * The number of parameters that are set has been grossly reduced.  We use the
  * smallest available buffer that's above a minimum size needed to avoid
- * glitches.  These sizes are roughly:
- * FR->ALSA: 1024
- * FR->ALSA->PA: 512
+ * glitches.  ALSA's native async interface needs ~2048 samples, the faked
+ * async needs ~2x length of the callback period.
  */
 int snd_pcm_hw_params_set_channels(snd_pcm_t *pcm,
 		snd_pcm_hw_params_t *params,
@@ -85,26 +92,47 @@ int snd_pcm_hw_params_set_channels(snd_pcm_t *pcm,
 	if (!real_func) real_func = dlsym(RTLD_NEXT, "snd_pcm_hw_params_set_channels");
 	real_func(pcm, params, val);
 
-	buffer = 1024;
+	buffer = 512;
 	snd_pcm_hw_params_set_buffer_size_min(pcm, params, &buffer);
 	snd_pcm_hw_params_set_buffer_size_first(pcm, params, &buffer);
 	printf("ended up with %lu buffer.\n", buffer);
 	return 0;
 }
 
-/* Intercept the hook to register Fieldrunners' audio callback and use our own
- * functions instead.  Since this calls the callback more frequently than ALSA
- * would, it allows for lower latency without introducing glitches, and works
- * around PulseAudio's lack of async code.
+/* Set up a timer to fire every 5ms, calling alsa_callback_caller().  This
+ * roughly replicates ALSA's SIGIO async interface, with a few advangages.
+ * PulseAudio doesn't support ALSA's async interface, but we can support it by
+ * faking the interface.  ALSA calls its callbacks every period, requiring
+ * additional periods, each of which may be 20ms or more.  We can call the
+ * callbacks however frequently we want, allowing for smaller buffers and lower
+ * latency.  This is abused
+ *
+ * Using signals should be marginally more effective than the new thread for
+ * every callback that was used previously.
  */
 int snd_async_add_pcm_handler(snd_async_handler_t **handler,
 		snd_pcm_t *pcm,
 		snd_async_callback_t callback,
 		void *private_data) {
+	timer_t alsa_timer;
+	struct itimerspec enable_timer = {
+		.it_interval = { .tv_sec = 0, .tv_nsec = 5000000 },
+		.it_value = { .tv_sec = 0, .tv_nsec = 5000000 }
+	};
+
+	/* Store data that FR expects ALSA to return */
 	fr_callback = callback;
 	fr_audio_private = private_data;
 	fr_pcm = pcm;
-	setup_alsa_timer();
+
+
+	/* signal() isn't portable, but so what?  The Linux Fieldrunners binary
+	 * isn't either.
+	 */
+	signal(SIGALRM, &alsa_callback_caller);
+	timer_create(CLOCK_MONOTONIC, NULL, &alsa_timer);
+	timer_settime(alsa_timer, 0, &enable_timer, 0);
+
 	return 0;
 }
 
@@ -141,25 +169,8 @@ snd_pcm_t *snd_async_handler_get_pcm(snd_async_handler_t *ahandler) {
 	return fr_pcm;
 }
 
-/* Set up a timer to fire every 10ms, calling alsa_callback_caller().  If we're
- * using PulseAudio, this is the only way to regularly call FR's audio
- * callback.
- *
- * Using signals should be marginally more effective than threads.
- */
+/* Pass a null pointer to Fieldrunners so we can segfault later :D */
 void alsa_callback_caller(int arg) { fr_callback(NULL); }
-
-void setup_alsa_timer() {
-	timer_t alsa_timer;
-	struct itimerspec enable_timer = {
-		.it_interval = { .tv_sec = 0, .tv_nsec = 10000000 },
-		.it_value = { .tv_sec = 0, .tv_nsec = 10000000 }
-	};
-
-	signal(SIGALRM, &alsa_callback_caller);
-	timer_create(CLOCK_MONOTONIC, NULL, &alsa_timer);
-	timer_settime(alsa_timer, 0, &enable_timer, 0);
-}
 /*}}}*/
 /*{{{ Video workarounds & associated input workarounds */
 /* FR-supplied callbacks */
