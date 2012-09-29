@@ -25,7 +25,7 @@
 #endif
 
 /*{{{ Audio workarounds */
-/* FR-supplied data */
+/* FR-supplied async stuff */
 void *fr_audio_private;
 snd_pcm_t *fr_pcm;
 void (*fr_callback)(snd_async_handler_t *ahandler);
@@ -70,7 +70,7 @@ int snd_pcm_open(snd_pcm_t **pcm,
  * This used to use _set_rate_resample because it didn't require looking up the
  * real function, but has been changed to _set_channels.  This means that FR
  * will do all of its configuration before we start mangling settings.  Ideally
- * keeps FR's calls from failing & disabling audio.
+ * this keeps FR's calls from failing & disabling audio.
  *
  * The number of parameters that are set has been grossly reduced.  We use the
  * smallest available buffer that's above a minimum size needed to avoid
@@ -86,22 +86,23 @@ int snd_pcm_hw_params_set_channels(snd_pcm_t *pcm,
 	snd_pcm_uframes_t buffer;
 
 	if (!real_func) real_func = dlsym(RTLD_NEXT, "snd_pcm_hw_params_set_channels");
-	real_func(pcm, params, val);
+	if (real_func(pcm, params, val) < 0)
+		printf("Couldn't set channels like Fieldrunners wanted.  Call your senator.\n");
 
 	buffer = 1024;
-	snd_pcm_hw_params_set_buffer_size_min(pcm, params, &buffer);
-	snd_pcm_hw_params_set_buffer_size_first(pcm, params, &buffer);
-	printf("ended up with %lu buffer.\n", buffer);
+	if (snd_pcm_hw_params_set_buffer_size_min(pcm, params, &buffer) < 0)
+		printf("Couldn't set minimum buffer size; got %lu instead.\n", buffer);
+	if (snd_pcm_hw_params_set_buffer_size_first(pcm, params, &buffer) < 0)
+		printf("Strangely, couldn't use first buffer size; got %lu instead.\n", buffer);
 	return 0;
 }
 
 /* Set up a timer to fire every 10ms, calling alsa_callback_caller().  This
  * roughly replicates ALSA's SIGIO async interface, with a few advangages.
  * PulseAudio doesn't support ALSA's async interface, but we can support it by
- * faking the interface.  ALSA calls its callbacks every period, requiring
- * additional periods, each of which may be 20ms or more.  We can call the
- * callbacks however frequently we want.  This is abused to reduce buffer size
- * and latency.
+ * faking the interface.  ALSA calls its callbacks each period, requiring
+ * additional periods (=buffer) to avoid stuttering.  We can call the callbacks
+ * however frequently we want, reducing buffer and latency requirements.
  *
  * Using signals should be marginally more effective than creating a new thread for
  * every callback (which should have crashed the game!).
@@ -125,9 +126,18 @@ int snd_async_add_pcm_handler(snd_async_handler_t **handler,
 	/* signal() isn't portable, but so what?  The Linux Fieldrunners binary
 	 * isn't either.
 	 */
-	signal(SIGALRM, &alsa_callback_caller);
-	timer_create(CLOCK_MONOTONIC, NULL, &alsa_timer);
-	timer_settime(alsa_timer, 0, &enable_timer, 0);
+	if (signal(SIGALRM, &alsa_callback_caller) == SIG_ERR) {
+		printf("Couldn't set up signal handler.  Sound won't work.\n");
+		return -1;
+	}
+	if (timer_create(CLOCK_MONOTONIC, NULL, &alsa_timer) < 0) {
+		printf("Time state inconsistent.  Please notify the Doctor.\n");
+		return -1;
+	}
+	if (timer_settime(alsa_timer, 0, &enable_timer, 0) < 0) {
+		printf("Couldn't start timer.  Self-destruct sequence aborted.\n");
+		return -1;
+	}
 
 	return 0;
 }
@@ -138,9 +148,8 @@ int snd_async_add_pcm_handler(snd_async_handler_t **handler,
  * means that buffer sizes will be reasonable, and therefore delay will never
  * be >1024, and the delay check won't cause any problems.
  *
- * Somewhere, there's bound to be a distribution with a modified PulseAudio
- * package or stupid audio drivers that will break without this.  The smart
- * money is on Debian being that distro.
+ * Somewhere, there's bound to be a modified PulseAudio package or stupid audio
+ * drivers that will break without this.  Since it's harmless, it's staying.
  */
 int snd_pcm_avail_delay(snd_pcm_t *pcm,
 		snd_pcm_sframes_t *availp,
@@ -154,9 +163,8 @@ int snd_pcm_avail_delay(snd_pcm_t *pcm,
 	return 0;
 }
 
-/* Since we may be circumventing ALSA's async_handler stuff (and feeding FR a
- * garbage pointer that shouldn't ever be used), it's easier to track this
- * ourselves.
+/* Since we circumvent ALSA's async_handler stuff (and feed FR a garbage
+ * pointer that shouldn't ever be used), we have to track this ourselves.
  */
 void *snd_async_handler_get_callback_private(snd_async_handler_t *ahandler) {
 	return fr_audio_private;
@@ -165,7 +173,8 @@ snd_pcm_t *snd_async_handler_get_pcm(snd_async_handler_t *ahandler) {
 	return fr_pcm;
 }
 
-/* Pass a null pointer to Fieldrunners so we can segfault later :D */
+/* Pass a null pointer to Fieldrunners so we can segfault later.  True story.
+ */
 void alsa_callback_caller(int arg) { fr_callback(NULL); }
 /*}}}*/
 /*{{{ Video workarounds & associated input workarounds */
