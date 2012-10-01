@@ -76,10 +76,10 @@ int snd_pcm_open(snd_pcm_t **pcm,
  * will do all of its configuration before we start mangling settings.  Ideally
  * this keeps FR's calls from failing & disabling audio.
  *
- * The number of parameters that are set has been grossly reduced.  We use the
- * smallest available buffer that's above a minimum size needed to avoid
- * glitches.  ALSA's native async interface needs ~2048 samples, the faked
- * async needs ~2x length of the callback period.
+ * The number of parameters that are set has been grossly reduced.  The only
+ * setting changed is buffer duration.  Buffer size and callback frequency are
+ * determined by FRBUF.  Since both are adjusted together, there's not really a
+ * lower limit on buffer size, but 10ms is a reasonable default.
  */
 int snd_pcm_hw_params_set_channels(snd_pcm_t *pcm,
 		snd_pcm_hw_params_t *params,
