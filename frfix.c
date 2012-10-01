@@ -23,6 +23,10 @@
 #ifndef FRDEV
 #define FRDEV "default"
 #endif
+/* Buffer length in ms, 10 works nicely */
+#ifndef FRBUF
+#define FRBUF (10)
+#endif
 
 /*{{{ Audio workarounds */
 /* FR-supplied async stuff */
@@ -83,17 +87,19 @@ int snd_pcm_hw_params_set_channels(snd_pcm_t *pcm,
 	static int (*real_func)(snd_pcm_t *pcm,
 		snd_pcm_hw_params_t *params,
 		unsigned int val);
-	snd_pcm_uframes_t buffer;
+	unsigned int buffer;
+	int dir;
 
 	if (!real_func) real_func = dlsym(RTLD_NEXT, "snd_pcm_hw_params_set_channels");
 	if (real_func(pcm, params, val) < 0)
 		printf("Couldn't set channels like Fieldrunners wanted.  Call your senator.\n");
 
-	buffer = 1024;
-	if (snd_pcm_hw_params_set_buffer_size_min(pcm, params, &buffer) < 0)
-		printf("Couldn't set minimum buffer size; got %lu instead.\n", buffer);
-	if (snd_pcm_hw_params_set_buffer_size_first(pcm, params, &buffer) < 0)
-		printf("Strangely, couldn't use first buffer size; got %lu instead.\n", buffer);
+	buffer = FRBUF * 1000;
+	dir = 0;
+	if (snd_pcm_hw_params_set_buffer_time_min(pcm, params, &buffer, &dir) < 0)
+		printf("Couldn't set minimum buffer size; got %u (%i) instead.\n", buffer, dir);
+	if (snd_pcm_hw_params_set_buffer_time_first(pcm, params, &buffer, &dir) < 0)
+		printf("Strangely, couldn't use first buffer size; got %u (%i) instead.\n", buffer, dir);
 	return 0;
 }
 
@@ -112,9 +118,10 @@ int snd_async_add_pcm_handler(snd_async_handler_t **handler,
 		snd_async_callback_t callback,
 		void *private_data) {
 	timer_t alsa_timer;
+	/* Fire every 1/2 buffer */
 	struct itimerspec enable_timer = {
-		.it_interval = { .tv_sec = 0, .tv_nsec = 10000000 },
-		.it_value = { .tv_sec = 0, .tv_nsec = 10000000 }
+		.it_interval = { .tv_sec = 0, .tv_nsec = FRBUF * 500000 },
+		.it_value = { .tv_sec = 0, .tv_nsec = FRBUF * 500000 }
 	};
 
 	/* Store data that FR expects ALSA to return */
