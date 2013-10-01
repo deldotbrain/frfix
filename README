@@ -1,0 +1,14 @@
+frfix: Fieldrunners Sound Fixes (and more!)
+
+frfix overrides a couple functions called by Fieldrunners so that it opens the
+correct system audio device and buffers its audio (more) correctly.  As a
+bonus, frfix also makes the window resizable, adds a fullscreen mode (press
+'f'), and fixes a few potential crashes.
+
+Installation:
+ - Untar into your Fieldrunners directory (perhaps /opt/fieldrunners)
+ - Run build.sh.  Note that you will probably have to do this as root if
+   Fieldrunners is installed system-wide (e.g. in /opt).
+
+Running:
+ - use launch.sh to run Fieldrunners
