@@ -55,7 +55,8 @@ void *snd_async_handler_get_callback_private(snd_async_handler_t *ahandler);
 snd_pcm_t *snd_async_handler_get_pcm(snd_async_handler_t *ahandler);
 
 /* Support function for the timer workaround */
-void alsa_callback_caller(int arg);
+static void alsa_callback_thread(void *arg);
+static pthread_spinlock_t callback_lock;
 
 /* Open 'default', no matter what FR tells us to do.
  */
@@ -96,7 +97,7 @@ int snd_pcm_hw_params_set_channels(snd_pcm_t *pcm,
 	if (real_func(pcm, params, val) < 0)
 		printf("Unable to configure audio channels.\n");
 
-	buffer = FRBUF * 1000;
+	buffer = FRBUF * 8000;
 	dir = 0;
 	if (snd_pcm_hw_params_set_buffer_time_min(pcm, params, &buffer, &dir) < 0)
 		printf("Unable to set minimum buffer size; got %u (%i) instead.\n", buffer, dir);
@@ -105,25 +106,23 @@ int snd_pcm_hw_params_set_channels(snd_pcm_t *pcm,
 	return 0;
 }
 
-/* Set up a timer to fire every 10ms, calling alsa_callback_caller().  This
- * roughly replicates ALSA's SIGIO async interface, with a few advangages.
- * PulseAudio doesn't support ALSA's async interface, but we can support it by
- * faking the interface.  ALSA calls its callbacks each period, requiring
- * additional periods (=buffer) to avoid stuttering.  We can call the callbacks
- * however frequently we want, reducing buffer and latency requirements.
- *
- * Using signals should be marginally more effective than creating a new thread for
- * every callback (which should have crashed the game!).
+/* Emulate ALSA's SIGIO async interface.  We don't use signals here, since
+ * pthreads' locking primitives seem to prefer being called from separate
+ * threads.
  */
 int snd_async_add_pcm_handler(snd_async_handler_t **handler,
 		snd_pcm_t *pcm,
 		snd_async_callback_t callback,
 		void *private_data) {
 	timer_t alsa_timer;
-	/* Fire every 1/2 buffer */
 	struct itimerspec enable_timer = {
-		.it_interval = { .tv_sec = 0, .tv_nsec = FRBUF * 500000 },
-		.it_value = { .tv_sec = 0, .tv_nsec = FRBUF * 500000 }
+		.it_interval = { .tv_sec = 0, .tv_nsec = FRBUF * 2000000 },
+		.it_value = { .tv_sec = 0, .tv_nsec = FRBUF * 2000000 }
+	};
+	struct sigevent timer_thread = {
+		.sigev_notify = SIGEV_THREAD,
+		.sigev_notify_function = (void *)alsa_callback_thread,
+		.sigev_value = { .sival_ptr = NULL },
 	};
 
 	/* Store data that FR expects ALSA to return */
@@ -131,15 +130,11 @@ int snd_async_add_pcm_handler(snd_async_handler_t **handler,
 	fr_audio_private = private_data;
 	fr_pcm = pcm;
 
-
-	/* signal() isn't portable, but so what?  The Linux Fieldrunners binary
-	 * isn't either.
-	 */
-	if (signal(SIGALRM, &alsa_callback_caller) == SIG_ERR) {
-		printf("Unable to set up signal handler.\n");
+	if (pthread_spin_init(&callback_lock, 0)) {
+		printf("Unable to initialize async lock.\n");
 		return -1;
 	}
-	if (timer_create(CLOCK_MONOTONIC, NULL, &alsa_timer) < 0) {
+	if (timer_create(CLOCK_MONOTONIC, &timer_thread, &alsa_timer) < 0) {
 		printf("Unable to create timer.\n");
 		return -1;
 	}
@@ -184,7 +179,15 @@ snd_pcm_t *snd_async_handler_get_pcm(snd_async_handler_t *ahandler) {
 
 /* Pass a null pointer to Fieldrunners so we can segfault later.  True story.
  */
-void alsa_callback_caller(int arg) { fr_callback(NULL); }
+void alsa_callback_thread(void *arg) {
+	if (pthread_spin_trylock(&callback_lock)) {
+		printf("%s: averting potential deadlock/crash\n", __func__);
+		return;
+	}
+
+	fr_callback(NULL);
+	pthread_spin_unlock(&callback_lock);
+}
 /*}}}*/
 /*{{{ Video workarounds & associated input workarounds */
 /* FR-supplied callbacks */
