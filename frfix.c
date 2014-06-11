@@ -1,4 +1,5 @@
 /* frfix.c: fix a few v1.0 bugs with Fieldrunners
+ * Copyright (C) 2012-2013, Ryan Pennucci <decimalman@gmail.com>
  *
  * Audio: a couple functions have been overridden, forcing FR to open the
  * system default sound device, and forcing a sane latency on the sound.
