@@ -212,7 +212,7 @@ void faked_motionfunc(int x, int y);
 /* Mouse mangler parameters */
 long act_w, act_h, act_xoff, act_yoff;
 float ptr_scale;
-char fs = 0;
+int fs = 0;
 
 /* We don't want Fieldrunners to revert our viewport settings.  Disable
  * glViewport, and look it up where it's needed.
@@ -239,12 +239,6 @@ void handle_reshape(int w, int h) {
 		ptr_scale = 720.0/h;
 	}
 	glvp(act_xoff, act_yoff, act_w, act_h);
-	/* Check if we're fullscreened and need letterbox workarounds.  There's
-	 * not really a good way to check this, but the check we use is a good
-	 * compromise.
-	 */
-	fs = ((glutGet(GLUT_SCREEN_WIDTH) == glutGet(GLUT_WINDOW_WIDTH)) &&
-		(glutGet(GLUT_SCREEN_HEIGHT) == glutGet(GLUT_WINDOW_HEIGHT)));
 }
 /* Intercept attempts to install a reshape handler and install our own instead. */
 void glutReshapeFunc(void (*func)(int width, int height)) {
@@ -257,11 +251,32 @@ void glutReshapeFunc(void (*func)(int width, int height)) {
  * 'f'->toggle fullscreen key, otherwise call Fieldrunners' keyboard callback.
  */
 void (*fr_kbfunc)(unsigned char key, int x, int y);
+static int saved_w, saved_h;
+static void toggle_fullscreen(void) {
+	if (fs) {
+		fs = 0;
+		glutReshapeWindow(saved_w, saved_h);
+	} else {
+		saved_w = glutGet(GLUT_WINDOW_WIDTH);
+		saved_h = glutGet(GLUT_WINDOW_HEIGHT);
+		fs = 1;
+		glutFullScreen();
+	}
+}
 void faked_kbfunc(unsigned char key, int x, int y) {
-	if (key == 'f') {
-		if (fs) glutReshapeWindow(1280,720);
-		else glutFullScreen();
-	} else fr_kbfunc(key, x, y);
+	switch (key) {
+	case 'f':
+		toggle_fullscreen();
+		break;
+	case '\r':
+		if (glutGetModifiers() == GLUT_ACTIVE_ALT) {
+			toggle_fullscreen();
+			return;
+		}
+		/* fall through */
+	default:
+		fr_kbfunc(key, x, y);
+	}
 }
 /* Intercept calls for keyboard callbacks and inject our function to check for
  * extra keybindings.
