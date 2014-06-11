@@ -32,9 +32,9 @@
 
 /*{{{ Audio workarounds */
 /* FR-supplied async stuff */
-void *fr_audio_private;
-snd_pcm_t *fr_pcm;
-void (*fr_callback)(snd_async_handler_t *ahandler);
+static void *fr_audio_private;
+static snd_pcm_t *fr_pcm;
+static void (*fr_callback)(snd_async_handler_t *ahandler);
 
 /* Overridden ALSA functions */
 int snd_pcm_open(snd_pcm_t **pcm,
@@ -179,7 +179,7 @@ snd_pcm_t *snd_async_handler_get_pcm(snd_async_handler_t *ahandler) {
 
 /* Pass a null pointer to Fieldrunners so we can segfault later.  True story.
  */
-void alsa_callback_thread(void *arg) {
+static void alsa_callback_thread(void *arg) {
 	if (pthread_spin_trylock(&callback_lock)) {
 		printf("%s: averting potential deadlock/crash\n", __func__);
 		return;
@@ -191,10 +191,10 @@ void alsa_callback_thread(void *arg) {
 /*}}}*/
 /*{{{ Video workarounds & associated input workarounds */
 /* FR-supplied callbacks */
-void (*fr_kbfunc)(unsigned char key, int x, int y);
-void (*fr_mousefunc)(int button, int state, int x, int y);
-void (*fr_pmotionfunc)(int x, int y);
-void (*fr_motionfunc)(int x, int y);
+static void (*fr_kbfunc)(unsigned char key, int x, int y);
+static void (*fr_mousefunc)(int button, int state, int x, int y);
+static void (*fr_pmotionfunc)(int x, int y);
+static void (*fr_motionfunc)(int x, int y);
 
 /* Overridden GL(UT) functions */
 void glutReshapeFunc(void (*func)(int width, int height));
@@ -205,17 +205,17 @@ void glutMotionFunc(void (*func)(int x, int y));
 void glViewport(GLint x, GLint y, GLsizei width, GLsizei height);
 
 /* Intermediate callback functions; support functions */
-void handle_reshape(int w, int h);
-void faked_kbfunc(unsigned char key, int x, int y);
-void mangle_mouse(int *x, int *y);
-void faked_mousefunc(int button, int state, int x, int y);
-void faked_pmotionfunc(int x, int y);
-void faked_motionfunc(int x, int y);
+static void handle_reshape(int w, int h);
+static void faked_kbfunc(unsigned char key, int x, int y);
+static void mangle_mouse(int *x, int *y);
+static void faked_mousefunc(int button, int state, int x, int y);
+static void faked_pmotionfunc(int x, int y);
+static void faked_motionfunc(int x, int y);
 
 /* Mouse mangler parameters */
-long act_w, act_h, act_xoff, act_yoff;
-float ptr_scale;
-int fs = 0;
+static long act_w, act_h, act_xoff, act_yoff;
+static float ptr_scale;
+static int fs = 0;
 
 /* We don't want Fieldrunners to revert our viewport settings.  Disable
  * glViewport, and look it up where it's needed.
@@ -225,7 +225,7 @@ void glViewport(GLint x, GLint y, GLsizei width, GLsizei height) { return; }
 /* handle_reshape calculates and sets an aspect-correct viewport, and stores its
  * variables for the mouse mangler.
  */
-void handle_reshape(int w, int h) {
+static void handle_reshape(int w, int h) {
 	static void (*glvp)(GLint x, GLint y, GLsizei width, GLsizei height);
 	if (!glvp) glvp = dlsym(RTLD_NEXT, "glViewport");
 	act_w = w;
@@ -253,7 +253,7 @@ void glutReshapeFunc(void (*func)(int width, int height)) {
 /* Our keyboard handler, used for new keybindings:
  * 'f'->toggle fullscreen key, otherwise call Fieldrunners' keyboard callback.
  */
-void (*fr_kbfunc)(unsigned char key, int x, int y);
+static void (*fr_kbfunc)(unsigned char key, int x, int y);
 static int saved_w, saved_h;
 static void toggle_fullscreen(void) {
 	if (fs) {
@@ -266,7 +266,7 @@ static void toggle_fullscreen(void) {
 		glutFullScreen();
 	}
 }
-void faked_kbfunc(unsigned char key, int x, int y) {
+static void faked_kbfunc(unsigned char key, int x, int y) {
 	switch (key) {
 	case 'f':
 		toggle_fullscreen();
@@ -294,7 +294,7 @@ void glutKeyboardFunc(void (*func)(unsigned char key, int x, int y)) {
 /* Mangle & bounds-check the pointer.  It should line up with the desktop when
  * windowed, and never disappear into the letterbox when fullscreen.
  */
-void mangle_mouse(int *x, int *y) {
+static void mangle_mouse(int *x, int *y) {
 	*x = (*x - (fs?0:act_xoff)) * ptr_scale;
 	*y = (*y - (fs?0:act_yoff)) * ptr_scale;
 	if (fs) {
@@ -311,17 +311,17 @@ void mangle_mouse(int *x, int *y) {
 /* Mangle the mouse so the cursor lines up with the desktop, then call FR's
  * associated callback with the adjusted coordinates.
  */
-void (*fr_mousefunc)(int button, int state, int x, int y);
+static void (*fr_mousefunc)(int button, int state, int x, int y);
 void faked_mousefunc(int button, int state, int x, int y) {
 	mangle_mouse(&x, &y);
 	fr_mousefunc(button, state, x, y);
 }
-void (*fr_pmotionfunc)(int x, int y);
+static void (*fr_pmotionfunc)(int x, int y);
 void faked_pmotionfunc(int x, int y) {
 	mangle_mouse(&x, &y);
 	fr_pmotionfunc(x, y);
 }
-void (*fr_motionfunc)(int x, int y);
+static void (*fr_motionfunc)(int x, int y);
 void faked_motionfunc(int x, int y) {
 	mangle_mouse(&x, &y);
 	fr_motionfunc(x, y);
@@ -354,13 +354,13 @@ void glutMotionFunc(void (*func)(int x, int y)) {
  * callback, and is specifically recommended to use a different function to
  * check for them.  WTF freeglut?
  */
-void (*fr_specialup)(int key, int x, int y);
+static void (*fr_specialup)(int key, int x, int y);
 
 void glutSpecialUpFunc(void (*func)(int key, int x, int y));
 
-void faked_specialup(int key, int x, int y);
+static void faked_specialup(int key, int x, int y);
 
-void faked_specialup(int key, int x, int y) {
+static void faked_specialup(int key, int x, int y) {
 	if ((key < 112) || (key > 117)) fr_specialup(key, x, y);
 }
 /* Intercept calls for special keypress handlers and inject our handler */
