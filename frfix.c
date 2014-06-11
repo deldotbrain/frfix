@@ -1,8 +1,9 @@
 /* frfix.c: fix a few v1.0 bugs with Fieldrunners
- * Copyright (C) 2012-2013, Ryan Pennucci <decimalman@gmail.com>
+ * Copyright (C) 2012-2014, Ryan Pennucci <decimalman@gmail.com>
  *
  * Audio: a couple functions have been overridden, forcing FR to open the
- * system default sound device, and forcing a sane latency on the sound.
+ * system default sound device, forcing a sane latency on the sound, and
+ * emulating ALSA's async interface to support e.g. PulseAudio.
  *
  * Video: a couple functions have been intercepted to allow resolution changing
  * and fullscreen support.
@@ -93,12 +94,12 @@ int snd_pcm_hw_params_set_channels(snd_pcm_t *pcm,
 
 	if (!real_func) real_func = dlsym(RTLD_NEXT, "snd_pcm_hw_params_set_channels");
 	if (real_func(pcm, params, val) < 0)
-		printf("Couldn't set channels like Fieldrunners wanted.  Call your senator.\n");
+		printf("Unable to configure audio channels.\n");
 
 	buffer = FRBUF * 1000;
 	dir = 0;
 	if (snd_pcm_hw_params_set_buffer_time_min(pcm, params, &buffer, &dir) < 0)
-		printf("Couldn't set minimum buffer size; got %u (%i) instead.\n", buffer, dir);
+		printf("Unable to set minimum buffer size; got %u (%i) instead.\n", buffer, dir);
 	if (snd_pcm_hw_params_set_buffer_time_first(pcm, params, &buffer, &dir) < 0)
 		printf("Strangely, couldn't use first buffer size; got %u (%i) instead.\n", buffer, dir);
 	return 0;
@@ -135,15 +136,15 @@ int snd_async_add_pcm_handler(snd_async_handler_t **handler,
 	 * isn't either.
 	 */
 	if (signal(SIGALRM, &alsa_callback_caller) == SIG_ERR) {
-		printf("Couldn't set up signal handler.  Sound won't work.\n");
+		printf("Unable to set up signal handler.\n");
 		return -1;
 	}
 	if (timer_create(CLOCK_MONOTONIC, NULL, &alsa_timer) < 0) {
-		printf("Time state inconsistent.  Please notify the Doctor.\n");
+		printf("Unable to create timer.\n");
 		return -1;
 	}
 	if (timer_settime(alsa_timer, 0, &enable_timer, 0) < 0) {
-		printf("Couldn't start timer.  Self-destruct sequence aborted.\n");
+		printf("Unable to start timer.\n");
 		return -1;
 	}
 
