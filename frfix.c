@@ -180,10 +180,8 @@ snd_pcm_t *snd_async_handler_get_pcm(snd_async_handler_t *ahandler) {
 /* Pass a null pointer to Fieldrunners so we can segfault later.  True story.
  */
 static void alsa_callback_thread(void *arg) {
-	if (pthread_spin_trylock(&callback_lock)) {
-		printf("%s: averting potential deadlock/crash\n", __func__);
+	if (pthread_spin_trylock(&callback_lock))
 		return;
-	}
 
 	fr_callback(NULL);
 	pthread_spin_unlock(&callback_lock);
